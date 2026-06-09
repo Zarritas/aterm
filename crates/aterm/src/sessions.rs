@@ -372,9 +372,6 @@ impl SessionPanel {
         let projects = &self.projects;
         let metadata = &self.metadata;
         let groups = &self.groups;
-        // `all_projects` (computed above for the import picker) doubles as the
-        // project list for the new-session menus.
-        let all_projects = &all_projects;
 
         egui::ScrollArea::vertical().show(ui, |ui| match self.group_mode {
             GroupMode::Provider => {
@@ -401,9 +398,7 @@ impl SessionPanel {
                             if let Some(q) = &group.quota {
                                 quota_badges(ui, q);
                             }
-                            new_session_pick_project(
-                                ui, group, all_projects, projects, &mut action,
-                            );
+                            new_session_pick_project(ui, group, projects, &mut action);
                             for si in visible {
                                 let s = &group.sessions[si];
                                 row_ui(
@@ -1064,11 +1059,18 @@ fn new_session_pick_provider(
 fn new_session_pick_project(
     ui: &mut egui::Ui,
     group: &ProviderGroup,
-    projects: &[String],
     names: &ProjectNames,
     action: &mut Option<PanelAction>,
 ) {
     let argv = group.provider.new_session_argv();
+    // Only this provider's own projects (distinct cwds across its sessions).
+    let mut projects: Vec<&str> = group
+        .sessions
+        .iter()
+        .filter_map(|s| s.cwd.as_deref())
+        .collect();
+    projects.sort_unstable();
+    projects.dedup();
     ui.add_enabled_ui(!argv.is_empty(), |ui| {
         ui.menu_button("+ Nueva sesión ▾", |ui| {
             ui.label("Proyecto:");
