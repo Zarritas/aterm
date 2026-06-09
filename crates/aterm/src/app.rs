@@ -195,7 +195,9 @@ impl eframe::App for AtermApp {
             }
 
             self.handle_mouse(ui, &response, metrics);
-            if response.has_focus() {
+            // No point typing into a shell that has already exited.
+            let alive = self.tabs[self.active].term.exit_code().is_none();
+            if response.has_focus() && alive {
                 self.handle_keyboard(ui);
             }
         });
