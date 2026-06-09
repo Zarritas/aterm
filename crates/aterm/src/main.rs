@@ -26,6 +26,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             app::install_fonts(&cc.egui_ctx);
+            app::install_theme(&cc.egui_ctx);
             Ok(Box::<app::AtermApp>::default())
         }),
     )

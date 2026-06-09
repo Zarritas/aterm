@@ -51,6 +51,61 @@ pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+/// Apply a cohesive dark theme (Catppuccin Mocha) so the UI isn't the flat
+/// default grey: warmer surfaces, a blue accent, rounded widgets, more spacing.
+pub fn install_theme(ctx: &egui::Context) {
+    use egui::{Color32, Rounding, Stroke};
+    let rgb = Color32::from_rgb;
+    // Catppuccin Mocha palette.
+    let base = rgb(0x1e, 0x1e, 0x2e);
+    let mantle = rgb(0x18, 0x18, 0x25);
+    let crust = rgb(0x11, 0x11, 0x1b);
+    let surface0 = rgb(0x31, 0x32, 0x44);
+    let surface1 = rgb(0x45, 0x47, 0x5a);
+    let surface2 = rgb(0x58, 0x5b, 0x70);
+    let overlay = rgb(0x6c, 0x70, 0x86);
+    let text = rgb(0xcd, 0xd6, 0xf4);
+    let blue = rgb(0x89, 0xb4, 0xfa);
+    let lavender = rgb(0xb4, 0xbe, 0xfe);
+    let red = rgb(0xf3, 0x8b, 0xa8);
+    let yellow = rgb(0xf9, 0xe2, 0xaf);
+
+    let mut v = egui::Visuals::dark();
+    let rounding = Rounding::same(6.0);
+    v.panel_fill = base;
+    v.window_fill = mantle;
+    v.window_stroke = Stroke::new(1.0, surface1);
+    v.window_rounding = rounding;
+    v.menu_rounding = rounding;
+    v.extreme_bg_color = crust; // text-edit background
+    v.faint_bg_color = surface0; // striped rows
+    v.code_bg_color = mantle;
+    v.hyperlink_color = blue;
+    v.warn_fg_color = yellow;
+    v.error_fg_color = red;
+    v.selection.bg_fill = Color32::from_rgba_unmultiplied(0x89, 0xb4, 0xfa, 70);
+    v.selection.stroke = Stroke::new(1.0, lavender);
+
+    let set = |w: &mut egui::style::WidgetVisuals, fill, stroke_c, fg| {
+        w.bg_fill = fill;
+        w.weak_bg_fill = fill;
+        w.bg_stroke = Stroke::new(1.0, stroke_c);
+        w.fg_stroke = Stroke::new(1.0, fg);
+        w.rounding = rounding;
+    };
+    set(&mut v.widgets.noninteractive, base, surface0, text);
+    set(&mut v.widgets.inactive, surface0, surface0, text);
+    set(&mut v.widgets.hovered, surface1, overlay, text);
+    set(&mut v.widgets.active, surface2, lavender, text);
+    set(&mut v.widgets.open, surface0, surface1, text);
+
+    let mut style = (*ctx.style()).clone();
+    style.visuals = v;
+    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    style.spacing.button_padding = egui::vec2(8.0, 4.0);
+    ctx.set_style(style);
+}
+
 /// Default monospace point size for new terminals.
 const FONT_SIZE: f32 = 14.0;
 const MIN_FONT: f32 = 7.0;

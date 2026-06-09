@@ -14,10 +14,11 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Stroke, Vec2};
 use super::TermInstance;
 
 /// Default foreground/background when the child hasn't overridden the palette.
-const DEFAULT_FG: Rgb = Rgb { r: 0xd0, g: 0xd0, b: 0xd0 };
-const DEFAULT_BG: Rgb = Rgb { r: 0x16, g: 0x16, b: 0x16 };
-/// Highlight behind selected cells.
-const SELECTION_BG: Rgb = Rgb { r: 0x3a, g: 0x3f, b: 0x5c };
+/// Tuned to match the app's Catppuccin Mocha chrome (base / text).
+const DEFAULT_FG: Rgb = Rgb { r: 0xcd, g: 0xd6, b: 0xf4 };
+const DEFAULT_BG: Rgb = Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
+/// Highlight behind selected cells (surface2).
+const SELECTION_BG: Rgb = Rgb { r: 0x58, g: 0x5b, b: 0x70 };
 
 /// Pixel metrics for one monospaced cell, derived from the chosen egui font.
 #[derive(Clone, Copy)]

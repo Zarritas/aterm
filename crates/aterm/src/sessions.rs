@@ -193,7 +193,7 @@ impl SessionPanel {
         let mut action = None;
 
         ui.horizontal(|ui| {
-            ui.heading("Agent sessions");
+            ui.heading(egui::RichText::new("Agent sessions").color(C_LAVENDER));
             let rescan = ui.add_enabled(!scanning, egui::Button::new("⟳"));
             if rescan.on_hover_text("Re-escanear").clicked() {
                 self.start_scan(ui.ctx());
@@ -286,7 +286,11 @@ impl SessionPanel {
                         Some(err) => format!("{} — {err}", group.display_name),
                         None => format!("{} ({})", group.display_name, visible.len()),
                     };
-                    egui::CollapsingHeader::new(header)
+                    egui::CollapsingHeader::new(
+                        egui::RichText::new(header)
+                            .color(provider_color(provider_id))
+                            .strong(),
+                    )
                         .id_salt(("provider", gi))
                         .default_open(!visible.is_empty())
                         .show(ui, |ui| {
@@ -349,7 +353,11 @@ impl SessionPanel {
                         Some(err) => format!("{} — {err}", group.display_name),
                         None => format!("{} ({})", group.display_name, visible.len()),
                     };
-                    egui::CollapsingHeader::new(header)
+                    egui::CollapsingHeader::new(
+                        egui::RichText::new(header)
+                            .color(provider_color(provider_id))
+                            .strong(),
+                    )
                         .id_salt(("casc-prov", gi))
                         .default_open(!visible.is_empty())
                         .show(ui, |ui| {
@@ -643,7 +651,6 @@ fn row_ui(
             let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
             ui.painter().circle_filled(rect.center(), 5.0, dot);
         }
-        let live = if s.is_active { "● " } else { "" };
         if ui
             .add_enabled(!s.resume_argv.is_empty(), egui::Button::new("▶"))
             .on_hover_text("Resume")
@@ -654,11 +661,14 @@ fn row_ui(
                 cwd: s.cwd.as_ref().map(PathBuf::from),
             });
         }
+        if s.is_active {
+            ui.colored_label(C_GREEN, "●").on_hover_text("Activa ahora");
+        }
         // In the by-project view, prefix the provider so the row stays legible.
         if show_provider {
-            ui.weak(format!("[{provider_id}]"));
+            ui.colored_label(provider_color(provider_id), format!("[{provider_id}]"));
         }
-        ui.label(format!("{live}{name}"));
+        ui.label(&name);
     });
 
     // Metadata line: model · branch · context% · msgs · relative time.
@@ -805,6 +815,22 @@ fn tag_passes(
     }
 }
 
+// Catppuccin accents reused across the panel.
+const C_LAVENDER: egui::Color32 = egui::Color32::from_rgb(0xb4, 0xbe, 0xfe);
+const C_TEAL: egui::Color32 = egui::Color32::from_rgb(0x94, 0xe2, 0xd5);
+const C_GREEN: egui::Color32 = egui::Color32::from_rgb(0xa6, 0xe3, 0xa1);
+
+/// Brand-ish accent per provider, for the section headers.
+fn provider_color(id: &str) -> egui::Color32 {
+    match id {
+        "claude" => egui::Color32::from_rgb(0xfa, 0xb3, 0x87),   // peach
+        "codex" => egui::Color32::from_rgb(0xa6, 0xe3, 0xa1),    // green
+        "opencode" => egui::Color32::from_rgb(0x74, 0xc7, 0xec), // sapphire
+        "gemini" => egui::Color32::from_rgb(0xcb, 0xa6, 0xf7),   // mauve
+        _ => C_LAVENDER,
+    }
+}
+
 /// The project bucket key for a session: its `cwd`, or a placeholder.
 fn project_key(s: &AgentSession) -> String {
     s.cwd.clone().unwrap_or_else(|| NO_PROJECT.to_string())
@@ -813,13 +839,13 @@ fn project_key(s: &AgentSession) -> String {
 /// Sentinel project key for sessions whose provider didn't record a cwd.
 const NO_PROJECT: &str = "(sin proyecto)";
 
-/// Header text for a project bucket: the user's alias if set, else the path.
-fn project_header(projects: &ProjectNames, path: &str, count: usize) -> String {
+/// Header for a project bucket: the user's alias if set, else the path, in teal.
+fn project_header(projects: &ProjectNames, path: &str, count: usize) -> egui::RichText {
     let label = projects
         .get(path)
         .map(str::to_string)
         .unwrap_or_else(|| display_path(path));
-    format!("{label} ({count})")
+    egui::RichText::new(format!("{label} ({count})")).color(C_TEAL)
 }
 
 /// First row inside a project bucket: a rename button plus the real path, so
