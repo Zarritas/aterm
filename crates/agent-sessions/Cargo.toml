@@ -1,0 +1,24 @@
+# Vendored verbatim from the Warp fork's `warp_agent_history` crate
+# (itself ported from multi-claude / Terax). Read-only session discovery for
+# Claude Code / Codex / OpenCode / Gemini. Standalone — no Warp coupling.
+#
+# `service_status.rs` (statuspage.io HTTP polling) is intentionally NOT wired
+# into lib.rs here: it pulls reqwest and was the one unfinished piece upstream.
+# Re-enable behind a `service-status` feature when needed.
+[package]
+name = "agent-sessions"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Reads coding-agent CLI sessions persisted on disk (Claude Code, Codex, OpenCode, Gemini)"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
+dirs = "6.0.0"
+libc = "0.2.81"
+zip = { version = "5", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.8.0"
+filetime = "0.2"
