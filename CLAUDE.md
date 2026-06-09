@@ -95,9 +95,10 @@ aterm/                         # workspace Cargo
 
 - **API de `alacritty_terminal` se mueve entre versiones.** Ya fijada contra 0.25.1
   en `term/`; si subes la versión, re-valida con `cargo check` (cambian nombres/firmas).
-- **`service_status.rs` (HTTP/reqwest) NO está vendorizado** — era la pieza pendiente
-  upstream y mete una dep de red pesada. Re-añádelo tras un feature `service-status`
-  cuando toque salud de servicios.
+- **Salud de servicios**: implementada en `aterm/src/service_status.rs` (NO el
+  vendor). Para evitar la dep de red pesada (reqwest), hace `curl` a las statuspage
+  v2 de Claude/OpenAI; best-effort (None si no hay curl/red). Badge por proveedor
+  en el panel. Otros proveedores (opencode/gemini) no publican statuspage.
 - **`agent-sessions` es read-only por diseño**: los providers derivan rutas del HOME,
   nunca aceptan paths del caller. Mantener esa propiedad.
 - **No re-implementar el VT loop**: usar `EventLoop` de alacritty_terminal (te da el

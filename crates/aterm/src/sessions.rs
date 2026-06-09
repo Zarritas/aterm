@@ -83,6 +83,7 @@ struct ProviderGroup {
     display_name: String,
     sessions: Vec<AgentSession>,
     quota: Option<ProviderQuota>,
+    status: Option<agent_sessions::types::ServiceStatus>,
     error: Option<String>,
 }
 
@@ -311,6 +312,9 @@ impl SessionPanel {
                         .id_salt(("provider", gi))
                         .default_open(!visible.is_empty())
                         .show(ui, |ui| {
+                            if let Some(s) = &group.status {
+                                status_badge(ui, s);
+                            }
                             if let Some(q) = &group.quota {
                                 quota_badges(ui, q);
                             }
@@ -377,6 +381,9 @@ impl SessionPanel {
                         .id_salt(("casc-prov", gi))
                         .default_open(!visible.is_empty())
                         .show(ui, |ui| {
+                            if let Some(s) = &group.status {
+                                status_badge(ui, s);
+                            }
                             if let Some(q) = &group.quota {
                                 quota_badges(ui, q);
                             }
@@ -761,6 +768,7 @@ fn scan_all_providers() -> Vec<ProviderGroup> {
         .map(|p| {
             let display_name = p.display_name().to_string();
             let quota = p.quota();
+            let status = crate::service_status::fetch(p.id());
             match p.list_sessions() {
                 Ok(mut sessions) => {
                     for s in &mut sessions {
@@ -772,6 +780,7 @@ fn scan_all_providers() -> Vec<ProviderGroup> {
                         display_name,
                         sessions,
                         quota,
+                        status,
                         error: None,
                     }
                 }
@@ -780,11 +789,32 @@ fn scan_all_providers() -> Vec<ProviderGroup> {
                     display_name,
                     sessions: Vec::new(),
                     quota,
+                    status,
                     error: Some(e),
                 },
             }
         })
         .collect()
+}
+
+/// Service-health badge from the provider's statuspage indicator.
+fn status_badge(ui: &mut egui::Ui, status: &agent_sessions::types::ServiceStatus) {
+    let (color, label) = match status.indicator.as_str() {
+        "none" => (C_GREEN, "operativo"),
+        "minor" => (egui::Color32::from_rgb(0xf9, 0xe2, 0xaf), "incidencia menor"),
+        "major" => (egui::Color32::from_rgb(0xfa, 0xb3, 0x87), "incidencia grave"),
+        "critical" => (egui::Color32::from_rgb(0xf3, 0x8b, 0xa8), "caída"),
+        _ => (egui::Color32::GRAY, "estado desconocido"),
+    };
+    let text = if status.description.is_empty() {
+        label.to_string()
+    } else {
+        status.description.clone()
+    };
+    ui.horizontal(|ui| {
+        ui.colored_label(color, "●");
+        ui.colored_label(color, text);
+    });
 }
 
 fn quota_badges(ui: &mut egui::Ui, q: &ProviderQuota) {
