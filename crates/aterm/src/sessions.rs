@@ -68,6 +68,11 @@ pub enum PanelAction {
     Open {
         argv: Vec<String>,
         cwd: Option<PathBuf>,
+        /// Stable `provider:id` identity for *resume* opens, so the host can
+        /// focus an existing tab instead of resuming the same session twice
+        /// (two agents writing one transcript would corrupt it). `None` for
+        /// fresh shells / new sessions, which may be opened repeatedly.
+        key: Option<String>,
     },
 }
 
@@ -300,7 +305,7 @@ impl SessionPanel {
                             if ui.button("+ Nueva sesión").clicked() {
                                 let argv = group.provider.new_session_argv();
                                 if !argv.is_empty() {
-                                    action = Some(PanelAction::Open { argv, cwd: None });
+                                    action = Some(PanelAction::Open { argv, cwd: None, key: None });
                                 }
                             }
                             for si in visible {
@@ -659,6 +664,7 @@ fn row_ui(
             *action = Some(PanelAction::Open {
                 argv: s.resume_argv.clone(),
                 cwd: s.cwd.as_ref().map(PathBuf::from),
+                key: Some(format!("{provider_id}:{}", s.id)),
             });
         }
         if s.is_active {

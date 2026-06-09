@@ -117,6 +117,9 @@ struct Tab {
     font_size: f32,
     /// True while a mouse drag-selection is in progress.
     selecting: bool,
+    /// `provider:id` for resumed sessions; `None` for plain shells. Used to
+    /// avoid resuming the same session into two tabs.
+    key: Option<String>,
 }
 
 pub struct AtermApp {
@@ -141,7 +144,27 @@ impl Default for AtermApp {
 }
 
 impl AtermApp {
-    fn open_tab(&mut self, ctx: &egui::Context, argv: Vec<String>, cwd: Option<std::path::PathBuf>) {
+    fn open_tab(
+        &mut self,
+        ctx: &egui::Context,
+        argv: Vec<String>,
+        cwd: Option<std::path::PathBuf>,
+        key: Option<String>,
+    ) {
+        // A resume whose session is already open just focuses that tab — never
+        // resume the same transcript into two live agents.
+        if let Some(k) = &key {
+            // Only dedupe against a still-live tab; if the previous resume has
+            // exited, a re-resume should spawn a fresh agent.
+            if let Some(i) = self.tabs.iter().position(|t| {
+                t.key.as_deref() == Some(k) && t.term.exit_code().is_none()
+            }) {
+                self.active = i;
+                self.focus_pending = true;
+                return;
+            }
+        }
+
         let metrics = CellMetrics::measure(ctx, FONT_SIZE);
         let size = TermSize {
             columns: 80,
@@ -155,6 +178,7 @@ impl AtermApp {
                     term,
                     font_size: FONT_SIZE,
                     selecting: false,
+                    key,
                 });
                 self.active = self.tabs.len() - 1;
                 self.focus_pending = true;
@@ -186,21 +210,22 @@ impl AtermApp {
 
 impl eframe::App for AtermApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut pending_open: Option<(Vec<String>, Option<std::path::PathBuf>)> = None;
+        let mut pending_open: Option<(Vec<String>, Option<std::path::PathBuf>, Option<String>)> =
+            None;
 
         egui::SidePanel::left("sessions")
             .resizable(true)
             .default_width(380.0)
             .show(ctx, |ui| {
-                if let Some(PanelAction::Open { argv, cwd }) = self.panel.ui(ui) {
-                    pending_open = Some((argv, cwd));
+                if let Some(PanelAction::Open { argv, cwd, key }) = self.panel.ui(ui) {
+                    pending_open = Some((argv, cwd, key));
                 }
             });
 
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("+ shell").clicked() {
-                    pending_open = Some((vec![default_shell()], None));
+                    pending_open = Some((vec![default_shell()], None, None));
                 }
                 ui.separator();
                 let mut to_close = None;
@@ -225,8 +250,8 @@ impl eframe::App for AtermApp {
             });
         });
 
-        if let Some((argv, cwd)) = pending_open {
-            self.open_tab(ctx, argv, cwd);
+        if let Some((argv, cwd, key)) = pending_open {
+            self.open_tab(ctx, argv, cwd, key);
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
