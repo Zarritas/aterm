@@ -72,6 +72,7 @@ pub struct TermInstance {
     pub term: Arc<FairMutex<Term<EventProxy>>>,
     notifier: Notifier,
     title: Arc<Mutex<String>>,
+    exit_code: Arc<Mutex<Option<i32>>>,
     fallback_title: String,
     pub size: TermSize,
 }
@@ -123,6 +124,7 @@ impl TermInstance {
             term,
             notifier,
             title: proxy.title,
+            exit_code: proxy.exit_code,
             fallback_title: argv.join(" "),
             size,
         })
@@ -185,14 +187,24 @@ impl TermInstance {
         self.term.lock().selection_to_string()
     }
 
-    /// Tab label: the OSC-2 title set by the child, else the spawn command.
+    /// Tab label: the OSC-2 title set by the child, else the spawn command,
+    /// with an `[exited N]` suffix once the child has terminated.
     pub fn title(&self) -> String {
         let live = self.title.lock().unwrap();
-        if live.is_empty() {
+        let base = if live.is_empty() {
             self.fallback_title.clone()
         } else {
             live.clone()
+        };
+        match *self.exit_code.lock().unwrap() {
+            Some(code) => format!("{base} [exited {code}]"),
+            None => base,
         }
+    }
+
+    /// The child's exit code, once it has terminated.
+    pub fn exit_code(&self) -> Option<i32> {
+        *self.exit_code.lock().unwrap()
     }
 }
 
@@ -214,6 +226,7 @@ pub struct EventProxy {
     ctx: egui::Context,
     sender: Arc<Mutex<Option<EventLoopSender>>>,
     title: Arc<Mutex<String>>,
+    exit_code: Arc<Mutex<Option<i32>>>,
 }
 
 impl EventProxy {
@@ -222,6 +235,7 @@ impl EventProxy {
             ctx,
             sender: Arc::new(Mutex::new(None)),
             title: Arc::new(Mutex::new(String::new())),
+            exit_code: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -248,6 +262,10 @@ impl EventListener for EventProxy {
                 self.ctx.request_repaint();
             }
             Event::Bell => self.ctx.request_repaint(),
+            Event::ChildExit(code) => {
+                *self.exit_code.lock().unwrap() = Some(code);
+                self.ctx.request_repaint();
+            }
             _ => {}
         }
     }
@@ -338,5 +356,34 @@ mod tests {
             }
         }
         assert!(found, "typed command never echoed into the grid");
+    }
+
+    /// The child's exit code propagates to `exit_code()` (drives the
+    /// `[exited N]` tab suffix).
+    #[test]
+    fn child_exit_code_is_observed() {
+        let size = TermSize {
+            columns: 80,
+            lines: 24,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        };
+        let term = TermInstance::spawn(
+            vec!["/bin/sh".to_string(), "-c".to_string(), "exit 7".to_string()],
+            None,
+            size,
+            egui::Context::default(),
+        )
+        .expect("spawn");
+
+        let mut code = None;
+        for _ in 0..200 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            if let Some(c) = term.exit_code() {
+                code = Some(c);
+                break;
+            }
+        }
+        assert_eq!(code, Some(7), "child exit code never observed");
     }
 }

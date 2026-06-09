@@ -61,13 +61,15 @@ aterm/                         # workspace Cargo
   estilos, cursor, selección), input teclado→bytes, scrollback, zoom y copy/paste.
 - ✅ **Panel con paridad funcional**: filas ricas, filtro, badges de quota, preview,
   rename/tags/color (metadata persistida), export/import y cleanup.
-- ✅ **Tests verdes**: 59 en `agent-sessions` + 2 e2e del núcleo del terminal (salida
-  del hijo e input echo). Release con `lto thin` compila.
+- ✅ **Tests verdes**: 59 en `agent-sessions` + 3 e2e del núcleo del terminal (salida
+  del hijo en el grid, input echo, código de salida). Release con `lto thin` compila.
+- ✅ **Salida del hijo**: al terminar (`exit`/Ctrl+D) la pestaña muestra `[exited N]`
+  en el título vía `Event::ChildExit`; se cierra con ✕ (no autodestruye para poder
+  leer el último output).
 - ⏳ **Fase 5 (render GPU)**: no hecha por diseño — opcional, solo si el throughput
   lo justifica (ver roadmap).
-- ⏳ **Pendientes menores conocidos**: una pestaña cuyo hijo sale (`exit`/Ctrl+D) se
-  queda con el último frame hasta cerrarla con ✕ (no autodetecta `Event::Exit`);
-  `transfer::move_session` (re-ruteo de proyecto Claude) no está cableado en la UI.
+- ⏳ **Pendiente menor conocido**: `transfer::move_session` (re-ruteo de proyecto
+  Claude) no está cableado en la UI (nicho).
 
 ## Roadmap (fases)
 
