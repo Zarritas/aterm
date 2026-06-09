@@ -708,26 +708,40 @@ fn row_ui(
         ui.label(&name);
     });
 
-    // Metadata line: model · branch · context% · msgs · relative time.
-    let mut bits: Vec<String> = Vec::new();
-    if let Some(model) = &s.model {
-        bits.push(short_model(model));
-    }
-    if let Some(branch) = &s.branch {
-        bits.push(format!("⎇ {branch}"));
-    }
-    if let (Some(tok), Some(win)) = (s.context_tokens, s.context_window) {
-        if win > 0 {
-            bits.push(format!("{}%", (tok * 100 / win).min(999)));
-        }
-    }
-    if let Some(n) = s.message_count {
-        bits.push(format!("{n} msg"));
-    }
-    bits.push(relative_time(s.last_activity));
+    // Metadata line: model · branch · context% · msgs · relative time. The
+    // context % is coloured by usage; the rest stays subdued.
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
         ui.add_space(16.0);
-        ui.weak(bits.join("  ·  "));
+        let mut sep = false;
+        let dot = |ui: &mut egui::Ui, sep: &mut bool| {
+            if *sep {
+                ui.weak("·");
+            }
+            *sep = true;
+        };
+        if let Some(model) = &s.model {
+            dot(ui, &mut sep);
+            ui.weak(short_model(model));
+        }
+        if let Some(branch) = &s.branch {
+            dot(ui, &mut sep);
+            ui.weak(format!("⎇ {branch}"));
+        }
+        if let (Some(tok), Some(win)) = (s.context_tokens, s.context_window) {
+            if win > 0 {
+                let pct = (tok * 100 / win).min(999);
+                dot(ui, &mut sep);
+                ui.colored_label(context_color(pct), format!("{pct}%"))
+                    .on_hover_text("Contexto usado");
+            }
+        }
+        if let Some(n) = s.message_count {
+            dot(ui, &mut sep);
+            ui.weak(format!("{n} msg"));
+        }
+        dot(ui, &mut sep);
+        ui.weak(relative_time(s.last_activity));
     });
 
     if let Some(m) = meta {
@@ -879,6 +893,17 @@ fn tag_passes(
 const C_LAVENDER: egui::Color32 = egui::Color32::from_rgb(0xb4, 0xbe, 0xfe);
 const C_TEAL: egui::Color32 = egui::Color32::from_rgb(0x94, 0xe2, 0xd5);
 const C_GREEN: egui::Color32 = egui::Color32::from_rgb(0xa6, 0xe3, 0xa1);
+
+/// Colour for a context-usage percentage: <40% green, 40–60% orange, ≥60% red.
+fn context_color(pct: u64) -> egui::Color32 {
+    if pct < 40 {
+        C_GREEN
+    } else if pct < 60 {
+        egui::Color32::from_rgb(0xfa, 0xb3, 0x87) // peach / orange
+    } else {
+        egui::Color32::from_rgb(0xf3, 0x8b, 0xa8) // red
+    }
+}
 
 /// Brand-ish accent per provider, for the section headers.
 fn provider_color(id: &str) -> egui::Color32 {
