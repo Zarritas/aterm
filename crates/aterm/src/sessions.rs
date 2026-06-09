@@ -5,6 +5,7 @@
 //! discovery + `MetadataStore` + `transfer`); this module is UI wiring.
 
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_sessions::{
@@ -49,7 +50,10 @@ struct PreviewState {
 
 pub struct SessionPanel {
     groups: Vec<ProviderGroup>,
+    /// Set once a scan has populated `groups` at least once.
     scanned: bool,
+    /// Channel carrying the result of an in-flight background scan, if any.
+    scan_rx: Option<Receiver<Vec<ProviderGroup>>>,
     filter: String,
     metadata: MetadataStore,
     metadata_path: PathBuf,
@@ -66,6 +70,7 @@ impl Default for SessionPanel {
         Self {
             groups: Vec::new(),
             scanned: false,
+            scan_rx: None,
             filter: String::new(),
             metadata,
             metadata_path,
@@ -78,39 +83,33 @@ impl Default for SessionPanel {
 }
 
 impl SessionPanel {
-    /// Re-scan every provider. Synchronous; fine for the session counts a
-    /// developer machine holds.
-    fn scan(&mut self) {
-        self.groups = all_providers()
-            .into_iter()
-            .map(|p| {
-                let display_name = p.display_name().to_string();
-                let quota = p.quota();
-                match p.list_sessions() {
-                    Ok(mut sessions) => {
-                        for s in &mut sessions {
-                            s.resume_argv = p.resume_argv(&s.id);
-                        }
-                        sessions.sort_by(|a, b| b.last_activity.total_cmp(&a.last_activity));
-                        ProviderGroup {
-                            provider: p,
-                            display_name,
-                            sessions,
-                            quota,
-                            error: None,
-                        }
-                    }
-                    Err(e) => ProviderGroup {
-                        provider: p,
-                        display_name,
-                        sessions: Vec::new(),
-                        quota,
-                        error: Some(e),
-                    },
-                }
-            })
-            .collect();
-        self.scanned = true;
+    /// Kick off a provider scan on a background thread. `list_sessions` shells
+    /// out (opencode takes ~2-3s) and `quota` reads files, so doing it on the
+    /// UI thread freezes the window — the OS then shows a "not responding"
+    /// dialog. The thread repaints the context when it finishes.
+    fn start_scan(&mut self, ctx: &egui::Context) {
+        if self.scan_rx.is_some() {
+            return; // a scan is already running
+        }
+        let (tx, rx) = mpsc::channel();
+        self.scan_rx = Some(rx);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let groups = scan_all_providers();
+            let _ = tx.send(groups);
+            ctx.request_repaint();
+        });
+    }
+
+    /// Adopt a finished scan's results, if the background thread has delivered.
+    fn poll_scan(&mut self) {
+        if let Some(rx) = &self.scan_rx {
+            if let Ok(groups) = rx.try_recv() {
+                self.groups = groups;
+                self.scanned = true;
+                self.scan_rx = None;
+            }
+        }
     }
 
     fn save_metadata(&mut self) {
@@ -122,15 +121,23 @@ impl SessionPanel {
     /// Render the panel into `ui`; returns an action when the user resumes a
     /// session or starts a new one.
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<PanelAction> {
-        if !self.scanned {
-            self.scan();
+        // First paint (and every re-scan) launches the scan off-thread so the
+        // window never blocks on `list_sessions`.
+        if !self.scanned && self.scan_rx.is_none() {
+            self.start_scan(ui.ctx());
         }
+        self.poll_scan();
+        let scanning = self.scan_rx.is_some();
         let mut action = None;
 
         ui.horizontal(|ui| {
             ui.heading("Agent sessions");
-            if ui.button("⟳").on_hover_text("Re-escanear").clicked() {
-                self.scanned = false;
+            let rescan = ui.add_enabled(!scanning, egui::Button::new("⟳"));
+            if rescan.on_hover_text("Re-escanear").clicked() {
+                self.start_scan(ui.ctx());
+            }
+            if scanning {
+                ui.spinner();
             }
         });
 
@@ -498,6 +505,39 @@ fn row_ui(
         }
     });
     ui.separator();
+}
+
+/// Scan every provider (list sessions + quota). Runs off the UI thread.
+fn scan_all_providers() -> Vec<ProviderGroup> {
+    all_providers()
+        .into_iter()
+        .map(|p| {
+            let display_name = p.display_name().to_string();
+            let quota = p.quota();
+            match p.list_sessions() {
+                Ok(mut sessions) => {
+                    for s in &mut sessions {
+                        s.resume_argv = p.resume_argv(&s.id);
+                    }
+                    sessions.sort_by(|a, b| b.last_activity.total_cmp(&a.last_activity));
+                    ProviderGroup {
+                        provider: p,
+                        display_name,
+                        sessions,
+                        quota,
+                        error: None,
+                    }
+                }
+                Err(e) => ProviderGroup {
+                    provider: p,
+                    display_name,
+                    sessions: Vec::new(),
+                    quota,
+                    error: Some(e),
+                },
+            }
+        })
+        .collect()
 }
 
 fn quota_badges(ui: &mut egui::Ui, q: &ProviderQuota) {
