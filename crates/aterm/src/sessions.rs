@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_sessions::{
-    all_providers, encode_cwd, export_sessions, import_archive_routed, parse_tags,
+    all_providers, encode_cwd, export_sessions, import_archive, import_archive_routed, parse_tags,
     types::{AgentSession, DeleteError, PreviewTurn, ProviderQuota},
     AgentProvider, ExportItem, MetadataStore,
 };
@@ -121,6 +121,11 @@ pub struct SessionPanel {
     edit: Option<EditState>,
     preview: Option<PreviewState>,
     import_path: String,
+    /// Import destination provider id (only "claude" is wired today).
+    import_provider: String,
+    /// Import destination project: `None` routes each session to its recorded
+    /// cwd; `Some(path)` forces every imported session into that project.
+    import_project: Option<String>,
     status: Option<String>,
 }
 
@@ -145,6 +150,8 @@ impl Default for SessionPanel {
             edit: None,
             preview: None,
             import_path: String::new(),
+            import_provider: "claude".to_string(),
+            import_project: None,
             status: None,
         }
     }
@@ -245,16 +252,101 @@ impl SessionPanel {
             });
         }
 
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.import_path)
-                    .hint_text("ruta .zip a importar")
-                    .desired_width(160.0),
-            );
-            if ui.button("Importar").clicked() {
-                self.do_import();
+        // Owned snapshots so the mutable import widgets below don't clash with
+        // borrows of `self.groups` / `self.projects`. Reused by the scroll area.
+        let all_projects: Vec<String> = {
+            let mut v: Vec<String> = self
+                .groups
+                .iter()
+                .flat_map(|g| g.sessions.iter().filter_map(|s| s.cwd.clone()))
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        };
+        let provider_list: Vec<(String, String)> = self
+            .groups
+            .iter()
+            .map(|g| (g.provider.id().to_string(), g.display_name.clone()))
+            .collect();
+        let project_options: Vec<(Option<String>, String)> = {
+            let mut v = vec![(None, "Auto (cwd original)".to_string())];
+            for p in &all_projects {
+                let label = self
+                    .projects
+                    .get(p)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| display_path(p));
+                v.push((Some(p.clone()), label));
             }
-        });
+            v
+        };
+
+        egui::CollapsingHeader::new("Importar sesiones")
+            .id_salt("import")
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Archivo:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.import_path)
+                            .hint_text("ruta .zip")
+                            .desired_width(220.0),
+                    );
+                });
+                // Filesystem autocomplete: list matching dirs / .zip files.
+                let trimmed = self.import_path.trim().to_string();
+                if !trimmed.is_empty() && !std::path::Path::new(&trimmed).is_file() {
+                    let candidates = path_candidates(&trimmed);
+                    if !candidates.is_empty() {
+                        egui::Frame::group(ui.style()).show(ui, |ui| {
+                            for c in candidates {
+                                if ui.selectable_label(false, completion_label(&c)).clicked() {
+                                    self.import_path = c;
+                                }
+                            }
+                        });
+                    }
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Proveedor:");
+                    egui::ComboBox::from_id_salt("imp-prov")
+                        .selected_text(self.import_provider.clone())
+                        .show_ui(ui, |ui| {
+                            for (id, name) in &provider_list {
+                                ui.add_enabled_ui(id == "claude", |ui| {
+                                    ui.selectable_value(
+                                        &mut self.import_provider,
+                                        id.clone(),
+                                        name,
+                                    )
+                                    .on_disabled_hover_text("Import solo soportado para Claude");
+                                });
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Proyecto:");
+                    let current = project_options
+                        .iter()
+                        .find(|(o, _)| *o == self.import_project)
+                        .map(|(_, l)| l.clone())
+                        .unwrap_or_else(|| "Auto (cwd original)".to_string());
+                    egui::ComboBox::from_id_salt("imp-proj")
+                        .selected_text(current)
+                        .show_ui(ui, |ui| {
+                            for (opt, label) in &project_options {
+                                ui.selectable_value(
+                                    &mut self.import_project,
+                                    opt.clone(),
+                                    label,
+                                );
+                            }
+                        });
+                });
+                if ui.button("Importar").clicked() {
+                    self.do_import();
+                }
+            });
 
         if let Some(status) = &self.status {
             ui.colored_label(egui::Color32::LIGHT_BLUE, status);
@@ -280,17 +372,8 @@ impl SessionPanel {
         let projects = &self.projects;
         let metadata = &self.metadata;
         let groups = &self.groups;
-        // Distinct working directories across all sessions — the project picker
-        // offered when starting a new session from a provider section.
-        let all_projects: Vec<String> = {
-            let mut v: Vec<String> = groups
-                .iter()
-                .flat_map(|g| g.sessions.iter().filter_map(|s| s.cwd.clone()))
-                .collect();
-            v.sort();
-            v.dedup();
-            v
-        };
+        // `all_projects` (computed above for the import picker) doubles as the
+        // project list for the new-session menus.
         let all_projects = &all_projects;
 
         egui::ScrollArea::vertical().show(ui, |ui| match self.group_mode {
@@ -501,10 +584,25 @@ impl SessionPanel {
             self.status = Some("Indica una ruta .zip".into());
             return;
         }
-        // Routed import targets Claude's project layout (the interop format).
+        if self.import_provider != "claude" {
+            // Only Claude's on-disk layout is wired in `transfer`.
+            self.status = Some(format!(
+                "Importar a {} aún no está soportado (solo Claude)",
+                self.import_provider
+            ));
+            return;
+        }
         let projects = home_dir().join(".claude/projects");
-        let fallback = projects.join("aterm-imported");
-        match import_archive_routed(&zip, &projects, &fallback, encode_cwd) {
+        let result = match &self.import_project {
+            // Auto: route each session to its recorded cwd (interop default).
+            None => {
+                let fallback = projects.join("aterm-imported");
+                import_archive_routed(&zip, &projects, &fallback, encode_cwd)
+            }
+            // Forced: drop every session into the chosen project's directory.
+            Some(path) => import_archive(&zip, &projects.join(encode_cwd(path))),
+        };
+        match result {
             Ok(o) => {
                 self.status = Some(format!(
                     "Importadas {} (omitidas {} existentes, {} sin datos)",
@@ -1073,10 +1171,96 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Filesystem completions for `input`: directories and `.zip` files in the
+/// directory being typed whose name starts with the current leaf. Directories
+/// come back with a trailing `/` so a click drills in.
+fn path_candidates(input: &str) -> Vec<String> {
+    let path = std::path::Path::new(input);
+    let (dir, prefix) = if input.ends_with('/') {
+        (PathBuf::from(input), String::new())
+    } else {
+        let dir = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        let prefix = path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default();
+        (dir, prefix)
+    };
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || !name.starts_with(&prefix) {
+                continue;
+            }
+            let is_dir = entry.path().is_dir();
+            if is_dir || name.to_lowercase().ends_with(".zip") {
+                let mut full = dir.join(&name).to_string_lossy().to_string();
+                if is_dir {
+                    full.push('/');
+                }
+                out.push(full);
+            }
+        }
+    }
+    out.sort();
+    out.truncate(12);
+    out
+}
+
+/// Display just the leaf of a completion candidate (with `/` kept for dirs).
+fn completion_label(candidate: &str) -> String {
+    let trimmed = candidate.trim_end_matches('/');
+    let leaf = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    if candidate.ends_with('/') {
+        format!("{leaf}/")
+    } else {
+        leaf.to_string()
+    }
+}
+
 fn config_dir() -> PathBuf {
     home_dir().join(".config/aterm")
 }
 
 fn metadata_path() -> PathBuf {
     config_dir().join("session-metadata.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_label_keeps_dir_slash_and_strips_path() {
+        assert_eq!(completion_label("/home/u/proj/"), "proj/");
+        assert_eq!(completion_label("/home/u/backup.zip"), "backup.zip");
+    }
+
+    #[test]
+    fn path_candidates_lists_dirs_and_zips_by_prefix() {
+        let dir = std::env::temp_dir().join("aterm_ac_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("keep.zip"), b"x").unwrap();
+        std::fs::write(dir.join("skip.txt"), b"x").unwrap();
+        std::fs::write(dir.join("other.zip"), b"x").unwrap();
+
+        // Prefix "k" inside the dir should match only keep.zip.
+        let input = format!("{}/k", dir.display());
+        let got = path_candidates(&input);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].ends_with("keep.zip"));
+
+        // Trailing slash lists the whole dir: sub/ (dir) + the two .zip files.
+        let all = path_candidates(&format!("{}/", dir.display()));
+        assert!(all.iter().any(|c| c.ends_with("sub/")));
+        assert!(all.iter().filter(|c| c.ends_with(".zip")).count() == 2);
+        assert!(!all.iter().any(|c| c.ends_with(".txt")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
