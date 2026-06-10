@@ -851,6 +851,14 @@ impl AtermApp {
             self.copy(text);
         }
 
+        // Middle-click pastes (X11-style): the clipboard, which a drag-select
+        // has just populated.
+        if response.middle_clicked() {
+            if let Some(text) = self.paste_text() {
+                self.paste_into(idx, &text, modes.bracketed_paste);
+            }
+        }
+
         // Wheel: scrollback normally; on the alternate screen send arrow keys
         // (alternate-scroll) so pagers/TUIs move instead of scrolling our buffer.
         if response.hovered() {
