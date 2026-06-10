@@ -935,114 +935,114 @@ fn row_ui(
         .or_else(|| s.title.clone())
         .unwrap_or_else(|| "(sin título)".to_string());
 
-    ui.horizontal(|ui| {
-        if let Some(dot) = meta.and_then(|m| m.color.as_ref()).and_then(parse_hex) {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-            ui.painter().circle_filled(rect.center(), 5.0, dot);
-        }
-        if ui
-            .add_enabled(!s.resume_argv.is_empty(), egui::Button::new("▶"))
-            .on_hover_text("Resume")
-            .clicked()
-        {
-            *action = Some(PanelAction::Open {
-                argv: s.resume_argv.clone(),
-                cwd: s.cwd.as_ref().map(PathBuf::from),
-                key: Some(format!("{provider_id}:{}", s.id)),
+    egui::Frame::none()
+        .fill(C_CARD)
+        .rounding(8.0)
+        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+
+            // Title line: live dot, resume, optional [provider], name.
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!s.resume_argv.is_empty(), egui::Button::new("▶"))
+                    .on_hover_text("Reanudar")
+                    .clicked()
+                {
+                    *action = Some(PanelAction::Open {
+                        argv: s.resume_argv.clone(),
+                        cwd: s.cwd.as_ref().map(PathBuf::from),
+                        key: Some(format!("{provider_id}:{}", s.id)),
+                    });
+                }
+                if let Some(dot) = meta.and_then(|m| m.color.as_ref()).and_then(parse_hex) {
+                    ui.colored_label(dot, "●");
+                }
+                if s.is_active {
+                    let (color, tip) = live_state(s.live_status.as_deref());
+                    ui.colored_label(color, "●").on_hover_text(tip);
+                }
+                if show_provider {
+                    ui.colored_label(provider_color(provider_id), format!("[{provider_id}]"));
+                }
+                ui.label(egui::RichText::new(&name).strong());
             });
-        }
-        if s.is_active {
-            let (color, tip) = live_state(s.live_status.as_deref());
-            ui.colored_label(color, "●").on_hover_text(tip);
-        }
-        // In the by-project view, prefix the provider so the row stays legible.
-        if show_provider {
-            ui.colored_label(provider_color(provider_id), format!("[{provider_id}]"));
-        }
-        ui.label(&name);
-    });
 
-    // Metadata line: model · branch · context% · msgs · relative time. The
-    // context % is coloured by usage; the rest stays subdued.
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        ui.add_space(16.0);
-        let mut sep = false;
-        let dot = |ui: &mut egui::Ui, sep: &mut bool| {
-            if *sep {
-                ui.weak("·");
-            }
-            *sep = true;
-        };
-        if let Some(model) = &s.model {
-            dot(ui, &mut sep);
-            ui.weak(short_model(model));
-        }
-        if let Some(branch) = &s.branch {
-            dot(ui, &mut sep);
-            ui.weak(format!("⎇ {branch}"));
-        }
-        if let (Some(tok), Some(win)) = (s.context_tokens, s.context_window) {
-            if win > 0 {
-                let pct = (tok * 100 / win).min(999);
-                dot(ui, &mut sep);
-                ui.colored_label(usage_color(pct as f64), format!("{pct}%"))
-                    .on_hover_text("Contexto usado");
-            }
-        }
-        if let Some(n) = s.message_count {
-            dot(ui, &mut sep);
-            ui.weak(format!("{n} msg"));
-        }
-        dot(ui, &mut sep);
-        ui.weak(relative_time(s.last_activity));
-    });
-
-    if let Some(m) = meta {
-        if !m.tags.is_empty() {
+            // Metadata line: model · branch · context% · msgs · relative time.
             ui.horizontal_wrapped(|ui| {
-                ui.add_space(16.0);
-                for tag in &m.tags {
-                    ui.weak(format!("#{tag}"));
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let mut sep = false;
+                let dot = |ui: &mut egui::Ui, sep: &mut bool| {
+                    if *sep {
+                        ui.weak("·");
+                    }
+                    *sep = true;
+                };
+                if let Some(model) = &s.model {
+                    dot(ui, &mut sep);
+                    ui.weak(short_model(model));
+                }
+                if let Some(branch) = &s.branch {
+                    dot(ui, &mut sep);
+                    ui.weak(format!("⎇ {branch}"));
+                }
+                if let (Some(tok), Some(win)) = (s.context_tokens, s.context_window) {
+                    if win > 0 {
+                        let pct = (tok * 100 / win).min(999);
+                        dot(ui, &mut sep);
+                        ui.colored_label(usage_color(pct as f64), format!("{pct}%"))
+                            .on_hover_text("Contexto usado");
+                    }
+                }
+                if let Some(n) = s.message_count {
+                    dot(ui, &mut sep);
+                    ui.weak(format!("{n} msg"));
+                }
+                dot(ui, &mut sep);
+                ui.weak(relative_time(s.last_activity));
+            });
+
+            if let Some(m) = meta {
+                if !m.tags.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        for tag in &m.tags {
+                            ui.colored_label(C_TEAL, format!("#{tag}"));
+                        }
+                    });
+                }
+            }
+
+            ui.horizontal(|ui| {
+                if ui.small_button("✏").on_hover_text("Renombrar / tags / color").clicked() {
+                    *to_edit = Some((provider_id.to_string(), s.id.clone()));
+                }
+                if ui.small_button("◉").on_hover_text("Preview").clicked() {
+                    *to_preview = Some((provider_id.to_string(), s.id.clone(), name.clone()));
+                }
+                if ui.small_button("⇩").on_hover_text("Exportar .zip").clicked() {
+                    *to_export = Some((gi, si));
+                }
+                // Compact / move — Claude only.
+                if provider_id == "claude" {
+                    if ui
+                        .small_button("⊟")
+                        .on_hover_text("Compactar contexto (/compact)")
+                        .clicked()
+                    {
+                        *to_compact = Some((gi, si));
+                    }
+                    if let Some(cwd) = &s.cwd {
+                        if ui.small_button("⇄").on_hover_text("Mover a otro proyecto").clicked() {
+                            *to_move = Some((s.id.clone(), cwd.clone(), s.is_active));
+                        }
+                    }
+                }
+                if ui.small_button("✖").on_hover_text("Eliminar").clicked() {
+                    *to_delete = Some((gi, si, s.is_active));
                 }
             });
-        }
-    }
-
-    ui.horizontal(|ui| {
-        ui.add_space(16.0);
-        if ui.small_button("✏").on_hover_text("Renombrar / tags / color").clicked() {
-            *to_edit = Some((provider_id.to_string(), s.id.clone()));
-        }
-        if ui.small_button("◉").on_hover_text("Preview").clicked() {
-            *to_preview = Some((provider_id.to_string(), s.id.clone(), name.clone()));
-        }
-        if ui.small_button("⇩").on_hover_text("Exportar .zip").clicked() {
-            *to_export = Some((gi, si));
-        }
-        // Compact and re-route — Claude only (the only provider implementing
-        // `compact_argv` / the project layout `move_session` understands).
-        if provider_id == "claude" {
-            if ui
-                .small_button("⊟")
-                .on_hover_text("Compactar contexto (/compact)")
-                .clicked()
-            {
-                *to_compact = Some((gi, si));
-            }
-            if let Some(cwd) = &s.cwd {
-                if ui.small_button("⇄").on_hover_text("Mover a otro proyecto").clicked() {
-                    *to_move = Some((s.id.clone(), cwd.clone(), s.is_active));
-                }
-            }
-        }
-        if ui.small_button("✖").on_hover_text("Eliminar").clicked() {
-            // Force when the session is active (second-click semantics live in
-            // the status message); a plain delete refuses active sessions.
-            *to_delete = Some((gi, si, s.is_active));
-        }
-    });
-    ui.separator();
+        });
+    ui.add_space(6.0);
 }
 
 /// Scan every provider (list sessions + quota). Runs off the UI thread.
@@ -1164,6 +1164,7 @@ const C_GREEN: egui::Color32 = egui::Color32::from_rgb(0xa6, 0xe3, 0xa1);
 const C_WORKING: egui::Color32 = egui::Color32::from_rgb(0xfa, 0xb3, 0x87); // peach/orange
 const C_WAITING: egui::Color32 = C_GREEN;
 const C_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0x89, 0xb4, 0xfa); // blue
+const C_CARD: egui::Color32 = egui::Color32::from_rgb(0x28, 0x28, 0x3a); // session card bg
 
 /// Colour for any usage percentage (context, session quota, weekly quota):
 /// <40% green, 40–60% orange, ≥60% red.

@@ -81,6 +81,9 @@ pub fn install_theme(ctx: &egui::Context) {
     v.window_stroke = Stroke::new(1.0, surface1);
     v.window_rounding = rounding;
     v.menu_rounding = rounding;
+    // Cleaner collapsibles: no left guide-line, no boxed header.
+    v.indent_has_left_vline = false;
+    v.collapsing_header_frame = false;
     v.extreme_bg_color = crust; // text-edit background
     v.faint_bg_color = surface0; // striped rows
     v.code_bg_color = mantle;
@@ -105,8 +108,10 @@ pub fn install_theme(ctx: &egui::Context) {
 
     let mut style = (*ctx.style()).clone();
     style.visuals = v;
-    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+    style.spacing.item_spacing = egui::vec2(8.0, 7.0);
     style.spacing.button_padding = egui::vec2(8.0, 5.0);
+    style.spacing.indent = 14.0;
+    style.spacing.scroll = egui::style::ScrollStyle::thin();
     // Larger, more readable UI text across the board.
     use egui::{FontFamily::Proportional, FontId, TextStyle};
     style.text_styles = [
