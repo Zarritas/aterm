@@ -528,32 +528,31 @@ impl AtermApp {
                             SettingsCat::Appearance => {
                                 ui.label(egui::RichText::new("APARIENCIA").color(accent).strong().size(13.0));
                                 ui.add_space(8.0);
-                                egui::Grid::new("set-ap")
-                                    .num_columns(2)
-                                    .spacing([16.0, 12.0])
-                                    .show(ui, |ui| {
-                                        ui.label("Tema");
-                                        let current = crate::theme::current_name();
-                                        egui::ComboBox::from_id_salt("settings-theme")
-                                            .selected_text(&current)
-                                            .show_ui(ui, |ui| {
-                                                for (name, _) in crate::theme::THEMES {
-                                                    if ui.selectable_label(current == name, name).clicked() {
-                                                        crate::theme::select(ui.ctx(), name);
-                                                    }
+                                ui.horizontal(|ui| {
+                                    label_w(ui, "Tema");
+                                    let current = crate::theme::current_name();
+                                    egui::ComboBox::from_id_salt("settings-theme")
+                                        .selected_text(&current)
+                                        .show_ui(ui, |ui| {
+                                            for (name, _) in crate::theme::THEMES {
+                                                if ui.selectable_label(current == name, name).clicked() {
+                                                    crate::theme::select(ui.ctx(), name);
                                                 }
-                                            });
-                                        ui.end_row();
-                                        ui.label("Fuente de la interfaz");
-                                        if ui.add(egui::Slider::new(&mut s.ui_font, 11.0..=22.0)).changed() {
-                                            reapply_theme = true;
-                                        }
-                                        ui.end_row();
-                                        ui.label("Fuente del terminal");
-                                        ui.add(egui::Slider::new(&mut s.term_font, 8.0..=28.0));
-                                        ui.end_row();
-                                    });
-                                ui.add_space(6.0);
+                                            }
+                                        });
+                                });
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    label_w(ui, "Fuente de la interfaz");
+                                    if ui.add(egui::Slider::new(&mut s.ui_font, 11.0..=22.0)).changed() {
+                                        reapply_theme = true;
+                                    }
+                                });
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    label_w(ui, "Fuente del terminal");
+                                    ui.add(egui::Slider::new(&mut s.term_font, 8.0..=28.0));
+                                });
                                 ui.label(
                                     egui::RichText::new(
                                         "La fuente del terminal aplica a pestañas nuevas.",
@@ -566,26 +565,24 @@ impl AtermApp {
                                 ui.label(egui::RichText::new("TERMINAL").color(accent).strong().size(13.0));
                                 ui.add_space(8.0);
                                 ui.checkbox(&mut s.auto_close_on_exit, "Cerrar la pestaña al salir (exit)");
-                                ui.add_space(6.0);
-                                egui::Grid::new("set-term")
-                                    .num_columns(2)
-                                    .spacing([16.0, 12.0])
-                                    .show(ui, |ui| {
-                                        ui.label("Shell");
-                                        ui.add(
-                                            egui::TextEdit::singleline(&mut s.shell_command)
-                                                .hint_text("$SHELL")
-                                                .desired_width(210.0),
-                                        );
-                                        ui.end_row();
-                                        ui.label("Directorio inicial");
-                                        ui.add(
-                                            egui::TextEdit::singleline(&mut s.shell_dir)
-                                                .hint_text("~ (home)")
-                                                .desired_width(210.0),
-                                        );
-                                        ui.end_row();
-                                    });
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    label_w(ui, "Shell");
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut s.shell_command)
+                                            .hint_text("$SHELL")
+                                            .desired_width(210.0),
+                                    );
+                                });
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    label_w(ui, "Directorio inicial");
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut s.shell_dir)
+                                            .hint_text("~ (home)")
+                                            .desired_width(210.0),
+                                    );
+                                });
                             }
                             SettingsCat::Panel => {
                                 ui.label(egui::RichText::new("PANEL DE SESIONES").color(accent).strong().size(13.0));
@@ -597,17 +594,13 @@ impl AtermApp {
                                     ui.checkbox(&mut s.scan_opencode, "OpenCode");
                                     ui.checkbox(&mut s.scan_gemini, "Gemini");
                                 });
-                                ui.add_space(4.0);
+                                ui.separator();
                                 ui.checkbox(&mut s.fetch_status, "Consultar estado y quota (red)");
-                                ui.add_space(6.0);
-                                egui::Grid::new("set-panel")
-                                    .num_columns(2)
-                                    .spacing([16.0, 12.0])
-                                    .show(ui, |ui| {
-                                        ui.label("Auto-refresco");
-                                        ui.add(egui::Slider::new(&mut s.refresh_secs, 15..=600).suffix(" s"));
-                                        ui.end_row();
-                                    });
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    label_w(ui, "Auto-refresco");
+                                    ui.add(egui::Slider::new(&mut s.refresh_secs, 15..=600).suffix(" s"));
+                                });
                             }
                         }
                     });
@@ -1025,6 +1018,17 @@ impl AtermApp {
             term.write(text.as_bytes());
         }
     }
+}
+
+/// A fixed-width, left-aligned label for a settings row (keeps controls aligned).
+fn label_w(ui: &mut egui::Ui, text: &str) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(150.0, 20.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.label(text);
+        },
+    );
 }
 
 fn default_shell() -> String {
