@@ -141,6 +141,8 @@ pub struct AtermApp {
     search_query: String,
     /// Buffer line of the last match, so "previous" continues further up.
     search_last: Option<i32>,
+    /// Tab id currently being dragged to reorder, if any.
+    dragging: Option<u64>,
 }
 
 impl Default for AtermApp {
@@ -156,6 +158,7 @@ impl Default for AtermApp {
             search_open: false,
             search_query: String::new(),
             search_last: None,
+            dragging: None,
         }
     }
 }
@@ -254,16 +257,18 @@ impl AtermApp {
         self.tabs.iter().position(|t| t.id == id)
     }
 
-    /// Move tab `src` to sit before tab `dst` in the bar.
-    fn reorder_tab(&mut self, src: u64, dst: u64) {
-        if src == dst {
-            return;
+    /// Move tab `src` to sit before tab `before` (or to the end when `None`).
+    fn move_tab(&mut self, src: u64, before: Option<u64>) {
+        if before == Some(src) {
+            return; // dropped on itself
         }
         let Some(from) = self.tab_index(src) else {
             return;
         };
         let tab = self.tabs.remove(from);
-        let to = self.tab_index(dst).unwrap_or(self.tabs.len());
+        let to = before
+            .and_then(|b| self.tab_index(b))
+            .unwrap_or(self.tabs.len());
         self.tabs.insert(to, tab);
     }
 
@@ -301,26 +306,29 @@ impl eframe::App for AtermApp {
                 let mut to_close = None;
                 let mut to_focus = None;
                 let mut to_split = None;
-                let mut to_reorder: Option<(u64, u64)> = None;
+                // Each tab label's horizontal extent, to resolve a drop by x.
+                let mut rects: Vec<(u64, egui::Rect)> = Vec::new();
                 for tab in &self.tabs {
                     let id = tab.id;
                     let shown = self.visible.contains(&id);
                     let label = truncate(&tab.term.title(), 22);
-                    // Selected when shown; the focused pane shows in accent.
                     let mut text = egui::RichText::new(label);
                     if id == self.focused {
                         text = text.color(egui::Color32::from_rgb(0xb4, 0xbe, 0xfe));
                     }
-                    // The label is a drag source (reorder) and a drop target.
-                    let drag_id = egui::Id::new(("tab-drag", id));
+                    if self.dragging == Some(id) {
+                        text = text.italics();
+                    }
+                    // Make the label sense dragging as well as clicking.
                     let resp = ui
-                        .dnd_drag_source(drag_id, id, |ui| ui.selectable_label(shown, text))
-                        .inner;
+                        .selectable_label(shown, text)
+                        .interact(egui::Sense::click_and_drag());
+                    rects.push((id, resp.rect));
                     if resp.clicked() {
                         to_focus = Some(id);
                     }
-                    if let Some(src) = resp.dnd_release_payload::<u64>() {
-                        to_reorder = Some((*src, id));
+                    if resp.drag_started() {
+                        self.dragging = Some(id);
                     }
                     if ui
                         .small_button("⊞")
@@ -334,9 +342,25 @@ impl eframe::App for AtermApp {
                     }
                     ui.separator();
                 }
-                if let Some((src, dst)) = to_reorder {
-                    self.reorder_tab(src, dst);
+
+                // Resolve an in-progress drag: drop before the first tab whose
+                // centre is right of the pointer (or at the end).
+                if let Some(src) = self.dragging {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    if ui.input(|i| i.pointer.any_released()) {
+                        let px = ui
+                            .input(|i| i.pointer.interact_pos())
+                            .map(|p| p.x)
+                            .unwrap_or(f32::INFINITY);
+                        let before = rects
+                            .iter()
+                            .find(|(_, r)| px < r.center().x)
+                            .map(|(id, _)| *id);
+                        self.move_tab(src, before);
+                        self.dragging = None;
+                    }
                 }
+
                 if let Some(id) = to_focus {
                     self.focus_tab(id);
                 }
