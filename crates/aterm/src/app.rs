@@ -350,7 +350,7 @@ impl eframe::App for AtermApp {
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("+ shell").clicked() {
-                    pending_open = Some((vec![default_shell()], None, None));
+                    pending_open = Some((vec![default_shell()], home_dir(), None));
                 }
                 ui.separator();
                 let mut to_close = None;
@@ -899,6 +899,11 @@ impl AtermApp {
 
 fn default_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+}
+
+/// The user's home directory, where a plain `+ shell` should start.
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(std::path::PathBuf::from)
 }
 
 fn truncate(s: &str, max: usize) -> String {
