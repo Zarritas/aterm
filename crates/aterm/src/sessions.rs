@@ -442,51 +442,32 @@ impl SessionPanel {
                     let provider_id = group.provider.id();
                     let visible: Vec<usize> =
                         (0..group.sessions.len()).filter(|si| passes(gi, *si)).collect();
-
-                    let active = visible
-                        .iter()
-                        .filter(|si| group.sessions[**si].is_active)
-                        .count();
-                    let header = match &group.error {
-                        Some(err) => format!("{} — {err}", group.display_name),
-                        None => format!(
-                            "{} ({}){}",
-                            group.display_name,
-                            visible.len(),
-                            active_suffix(active)
-                        ),
-                    };
-                    egui::CollapsingHeader::new(
-                        egui::RichText::new(header)
-                            .color(provider_color(provider_id))
-                            .strong(),
-                    )
-                        .id_salt(("provider", gi))
-                        .open(force_open)
-                        .default_open(!visible.is_empty())
-                        .show(ui, |ui| {
-                            if let Some(s) = &group.status {
-                                status_badge(ui, s);
-                            }
-                            if let Some(q) = &group.quota {
-                                quota_badges(ui, q);
-                            }
-                            new_session_pick_project(
-                                ui,
-                                group,
-                                projects,
-                                &mut new_session_path,
-                                &mut action,
+                    let counts = count_states(visible.iter().map(|si| &group.sessions[*si]));
+                    let title = match &group.error {
+                        Some(err) => egui::RichText::new(format!("{} — {err}", group.display_name)),
+                        None => {
+                            egui::RichText::new(format!("{} ({})", group.display_name, visible.len()))
+                        }
+                    }
+                    .color(provider_color(provider_id))
+                    .strong();
+                    section(ui, ("provider", gi), title, counts, force_open, !visible.is_empty(), |ui| {
+                        if let Some(s) = &group.status {
+                            status_badge(ui, s);
+                        }
+                        if let Some(q) = &group.quota {
+                            quota_badges(ui, q);
+                        }
+                        new_session_pick_project(ui, group, projects, &mut new_session_path, &mut action);
+                        for si in visible {
+                            let s = &group.sessions[si];
+                            row_ui(
+                                ui, s, metadata.get(provider_id, &s.id), provider_id, gi, si, false,
+                                &mut action, &mut to_edit, &mut to_preview, &mut to_export,
+                                &mut to_delete, &mut to_move, &mut to_compact,
                             );
-                            for si in visible {
-                                let s = &group.sessions[si];
-                                row_ui(
-                                    ui, s, metadata.get(provider_id, &s.id), provider_id, gi, si,
-                                    false, &mut action, &mut to_edit, &mut to_preview,
-                                    &mut to_export, &mut to_delete, &mut to_move, &mut to_compact,
-                                );
-                            }
-                        });
+                        }
+                    });
                 }
             }
             GroupMode::Project => {
@@ -502,33 +483,24 @@ impl SessionPanel {
                     }
                 }
                 for (bi, (project, items)) in buckets.iter().enumerate() {
-                    let active = items
-                        .iter()
-                        .filter(|(gi, si)| groups[*gi].sessions[*si].is_active)
-                        .count();
-                    egui::CollapsingHeader::new(project_header(
-                        projects,
-                        project,
-                        items.len(),
-                        active,
-                    ))
-                    .id_salt(("project", bi))
-                    .open(force_open)
-                    .default_open(true)
-                        .show(ui, |ui| {
-                            project_rename_row(ui, project, &mut to_rename_project);
-                            let proj = (project.as_str() != NO_PROJECT).then(|| project.as_str());
-                            new_session_pick_provider(ui, groups, proj, &mut action);
-                            for (gi, si) in items {
-                                let group = &groups[*gi];
-                                let s = &group.sessions[*si];
-                                row_ui(
-                                    ui, s, metadata.get(group.provider.id(), &s.id),
-                                    group.provider.id(), *gi, *si, true, &mut action, &mut to_edit,
-                                    &mut to_preview, &mut to_export, &mut to_delete, &mut to_move, &mut to_compact,
-                                );
-                            }
-                        });
+                    let counts =
+                        count_states(items.iter().map(|(gi, si)| &groups[*gi].sessions[*si]));
+                    let title = project_header(projects, project, items.len());
+                    section(ui, ("project", bi), title, counts, force_open, true, |ui| {
+                        project_rename_row(ui, project, &mut to_rename_project);
+                        let proj = (project.as_str() != NO_PROJECT).then(|| project.as_str());
+                        new_session_pick_provider(ui, groups, proj, &mut action);
+                        for (gi, si) in items {
+                            let group = &groups[*gi];
+                            let s = &group.sessions[*si];
+                            row_ui(
+                                ui, s, metadata.get(group.provider.id(), &s.id),
+                                group.provider.id(), *gi, *si, true, &mut action, &mut to_edit,
+                                &mut to_preview, &mut to_export, &mut to_delete, &mut to_move,
+                                &mut to_compact,
+                            );
+                        }
+                    });
                 }
             }
             GroupMode::Cascade => {
@@ -536,78 +508,53 @@ impl SessionPanel {
                     let provider_id = group.provider.id();
                     let visible: Vec<usize> =
                         (0..group.sessions.len()).filter(|si| passes(gi, *si)).collect();
-                    let active = visible
-                        .iter()
-                        .filter(|si| group.sessions[**si].is_active)
-                        .count();
-                    let header = match &group.error {
-                        Some(err) => format!("{} — {err}", group.display_name),
-                        None => format!(
-                            "{} ({}){}",
-                            group.display_name,
-                            visible.len(),
-                            active_suffix(active)
-                        ),
-                    };
-                    egui::CollapsingHeader::new(
-                        egui::RichText::new(header)
-                            .color(provider_color(provider_id))
-                            .strong(),
-                    )
-                        .id_salt(("casc-prov", gi))
-                        .open(force_open)
-                        .default_open(!visible.is_empty())
-                        .show(ui, |ui| {
-                            if let Some(s) = &group.status {
-                                status_badge(ui, s);
-                            }
-                            if let Some(q) = &group.quota {
-                                quota_badges(ui, q);
-                            }
-                            // Sub-bucket this provider's sessions by project.
-                            let mut subs: std::collections::BTreeMap<String, Vec<usize>> =
-                                std::collections::BTreeMap::new();
-                            for si in &visible {
-                                subs.entry(project_key(&group.sessions[*si])).or_default().push(*si);
-                            }
-                            for (pi, (project, sis)) in subs.iter().enumerate() {
-                                let active =
-                                    sis.iter().filter(|si| group.sessions[**si].is_active).count();
-                                egui::CollapsingHeader::new(project_header(
-                                    projects,
-                                    project,
-                                    sis.len(),
-                                    active,
-                                ))
-                                    .id_salt(("casc-proj", gi, pi))
-                                    .open(force_open)
-                                    .default_open(true)
-                                    .show(ui, |ui| {
-                                        project_rename_row(ui, project, &mut to_rename_project);
-                                        // Provider and project are both fixed here: open directly.
-                                        if ui.button("+ Nueva sesión").clicked() {
-                                            let argv = group.provider.new_session_argv();
-                                            if !argv.is_empty() {
-                                                let cwd = (project.as_str() != NO_PROJECT)
-                                                    .then(|| PathBuf::from(project));
-                                                action = Some(PanelAction::Open {
-                                                    argv,
-                                                    cwd,
-                                                    key: None,
-                                                });
-                                            }
-                                        }
-                                        for si in sis {
-                                            let s = &group.sessions[*si];
-                                            row_ui(
-                                                ui, s, metadata.get(provider_id, &s.id), provider_id,
-                                                gi, *si, false, &mut action, &mut to_edit,
-                                                &mut to_preview, &mut to_export, &mut to_delete, &mut to_move, &mut to_compact,
-                                            );
-                                        }
-                                    });
-                            }
-                        });
+                    let counts = count_states(visible.iter().map(|si| &group.sessions[*si]));
+                    let title = match &group.error {
+                        Some(err) => egui::RichText::new(format!("{} — {err}", group.display_name)),
+                        None => {
+                            egui::RichText::new(format!("{} ({})", group.display_name, visible.len()))
+                        }
+                    }
+                    .color(provider_color(provider_id))
+                    .strong();
+                    section(ui, ("casc-prov", gi), title, counts, force_open, !visible.is_empty(), |ui| {
+                        if let Some(s) = &group.status {
+                            status_badge(ui, s);
+                        }
+                        if let Some(q) = &group.quota {
+                            quota_badges(ui, q);
+                        }
+                        // Sub-bucket this provider's sessions by project.
+                        let mut subs: std::collections::BTreeMap<String, Vec<usize>> =
+                            std::collections::BTreeMap::new();
+                        for si in &visible {
+                            subs.entry(project_key(&group.sessions[*si])).or_default().push(*si);
+                        }
+                        for (pi, (project, sis)) in subs.iter().enumerate() {
+                            let counts = count_states(sis.iter().map(|si| &group.sessions[*si]));
+                            let title = project_header(projects, project, sis.len());
+                            section(ui, ("casc-proj", gi, pi), title, counts, force_open, true, |ui| {
+                                project_rename_row(ui, project, &mut to_rename_project);
+                                // Provider and project both fixed here: open directly.
+                                if ui.button("+ Nueva sesión").clicked() {
+                                    let argv = group.provider.new_session_argv();
+                                    if !argv.is_empty() {
+                                        let cwd = (project.as_str() != NO_PROJECT)
+                                            .then(|| PathBuf::from(project));
+                                        action = Some(PanelAction::Open { argv, cwd, key: None });
+                                    }
+                                }
+                                for si in sis {
+                                    let s = &group.sessions[*si];
+                                    row_ui(
+                                        ui, s, metadata.get(provider_id, &s.id), provider_id, gi,
+                                        *si, false, &mut action, &mut to_edit, &mut to_preview,
+                                        &mut to_export, &mut to_delete, &mut to_move, &mut to_compact,
+                                    );
+                                }
+                            });
+                        }
+                    });
                 }
             }
         });
@@ -1213,6 +1160,10 @@ fn tag_passes(
 const C_LAVENDER: egui::Color32 = egui::Color32::from_rgb(0xb4, 0xbe, 0xfe);
 const C_TEAL: egui::Color32 = egui::Color32::from_rgb(0x94, 0xe2, 0xd5);
 const C_GREEN: egui::Color32 = egui::Color32::from_rgb(0xa6, 0xe3, 0xa1);
+// Live-session states — kept visually distinct (orange vs green vs blue).
+const C_WORKING: egui::Color32 = egui::Color32::from_rgb(0xfa, 0xb3, 0x87); // peach/orange
+const C_WAITING: egui::Color32 = C_GREEN;
+const C_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0x89, 0xb4, 0xfa); // blue
 
 /// Colour for any usage percentage (context, session quota, weekly quota):
 /// <40% green, 40–60% orange, ≥60% red.
@@ -1229,12 +1180,9 @@ fn usage_color(pct: f64) -> egui::Color32 {
 /// Colour + tooltip for a live session's status: working vs waiting.
 fn live_state(status: Option<&str>) -> (egui::Color32, &'static str) {
     match status {
-        Some("busy") => (
-            egui::Color32::from_rgb(0xf9, 0xe2, 0xaf),
-            "Trabajando",
-        ),
-        Some("idle") => (C_GREEN, "En espera"),
-        _ => (egui::Color32::from_rgb(0x89, 0xb4, 0xfa), "Activa"),
+        Some("busy") => (C_WORKING, "Trabajando"),
+        Some("idle") => (C_WAITING, "En espera"),
+        _ => (C_ACTIVE, "Activa"),
     }
 }
 
@@ -1257,28 +1205,78 @@ fn project_key(s: &AgentSession) -> String {
 /// Sentinel project key for sessions whose provider didn't record a cwd.
 const NO_PROJECT: &str = "(sin proyecto)";
 
-/// Header for a project bucket: alias if set, else the path; in teal, with an
-/// active-session count when any are live.
-fn project_header(
-    projects: &ProjectNames,
-    path: &str,
-    count: usize,
-    active: usize,
-) -> egui::RichText {
+/// Header for a project bucket: alias if set, else the path, in teal.
+fn project_header(projects: &ProjectNames, path: &str, count: usize) -> egui::RichText {
     let label = projects
         .get(path)
         .map(str::to_string)
         .unwrap_or_else(|| display_path(path));
-    egui::RichText::new(format!("{label} ({count}){}", active_suffix(active))).color(C_TEAL)
+    egui::RichText::new(format!("{label} ({count})")).color(C_TEAL)
 }
 
-/// `"  ●N"` suffix for headers when `n` sessions are live (empty when none).
-fn active_suffix(n: usize) -> String {
-    if n > 0 {
-        format!("  ●{n}")
-    } else {
-        String::new()
+/// Live-session tally split by reported state, for the section headers.
+#[derive(Default, Clone, Copy)]
+struct StateCounts {
+    working: usize,
+    waiting: usize,
+    other: usize,
+}
+
+impl StateCounts {
+    /// Coloured `●N` badges (only for non-zero buckets).
+    fn badges(self, ui: &mut egui::Ui) {
+        if self.working > 0 {
+            ui.colored_label(C_WORKING, format!("●{}", self.working))
+                .on_hover_text("Trabajando");
+        }
+        if self.waiting > 0 {
+            ui.colored_label(C_WAITING, format!("●{}", self.waiting))
+                .on_hover_text("En espera");
+        }
+        if self.other > 0 {
+            ui.colored_label(C_ACTIVE, format!("●{}", self.other))
+                .on_hover_text("Activa");
+        }
     }
+}
+
+fn count_states<'a>(sessions: impl Iterator<Item = &'a AgentSession>) -> StateCounts {
+    let mut c = StateCounts::default();
+    for s in sessions {
+        if !s.is_active {
+            continue;
+        }
+        match s.live_status.as_deref() {
+            Some("busy") => c.working += 1,
+            Some("idle") => c.waiting += 1,
+            _ => c.other += 1,
+        }
+    }
+    c
+}
+
+/// A collapsible section with a custom header (title + per-state badges).
+fn section(
+    ui: &mut egui::Ui,
+    salt: impl std::hash::Hash,
+    title: egui::RichText,
+    counts: StateCounts,
+    force_open: Option<bool>,
+    default_open: bool,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    let id = ui.make_persistent_id(salt);
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+    if let Some(open) = force_open {
+        state.set_open(open);
+    }
+    state
+        .show_header(ui, |ui| {
+            ui.label(title);
+            counts.badges(ui);
+        })
+        .body(|ui| body(ui));
 }
 
 /// "New session" for a *project* section: the project is fixed, so the menu

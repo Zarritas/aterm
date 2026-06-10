@@ -36,13 +36,17 @@ pub fn install_fonts(ctx: &egui::Context) {
     if loaded.is_empty() {
         return;
     }
-    // Append as fallbacks to the *proportional* family only (the UI/buttons).
-    // The terminal grid uses Monospace, where mixing in proportional fonts
-    // would break cell alignment, so we leave that family untouched.
+    // The UI (proportional) family: make Noto Sans the primary when available
+    // (more legible than egui's default Ubuntu-Light), with the rest as
+    // fallbacks. Monospace is left untouched so the terminal grid stays aligned.
     let list = fonts
         .families
         .entry(egui::FontFamily::Proportional)
         .or_default();
+    // Prepend Noto Sans (legible body face) ahead of the built-in primary.
+    if loaded.iter().any(|n| n == "sys-noto") {
+        list.insert(0, "sys-noto".to_string());
+    }
     for name in &loaded {
         if !list.contains(name) {
             list.push(name.clone());
@@ -102,7 +106,17 @@ pub fn install_theme(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     style.visuals = v;
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(8.0, 4.0);
+    style.spacing.button_padding = egui::vec2(8.0, 5.0);
+    // Larger, more readable UI text across the board.
+    use egui::{FontFamily::Proportional, FontId, TextStyle};
+    style.text_styles = [
+        (TextStyle::Heading, FontId::new(20.0, Proportional)),
+        (TextStyle::Body, FontId::new(15.5, Proportional)),
+        (TextStyle::Button, FontId::new(15.5, Proportional)),
+        (TextStyle::Small, FontId::new(13.0, Proportional)),
+        (TextStyle::Monospace, FontId::new(14.0, egui::FontFamily::Monospace)),
+    ]
+    .into();
     ctx.set_style(style);
 }
 
