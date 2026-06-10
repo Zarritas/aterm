@@ -124,6 +124,9 @@ pub struct SessionPanel {
     group_mode: GroupMode,
     /// Active "folder": when set, only sessions carrying this tag are shown.
     tag_filter: Option<String>,
+    /// One-frame override to force every header open (`Some(true)`) or closed
+    /// (`Some(false)`); cleared after applying.
+    force_open: Option<bool>,
     metadata: MetadataStore,
     metadata_path: PathBuf,
     projects: ProjectNames,
@@ -159,6 +162,7 @@ impl Default for SessionPanel {
             filter: String::new(),
             group_mode: GroupMode::Provider,
             tag_filter: None,
+            force_open: None,
             metadata,
             metadata_path,
             projects,
@@ -249,6 +253,12 @@ impl SessionPanel {
             let rescan = ui.add_enabled(!scanning, egui::Button::new("⟳"));
             if rescan.on_hover_text("Re-escanear").clicked() {
                 self.start_scan(ui.ctx());
+            }
+            if ui.small_button("▾").on_hover_text("Expandir todo").clicked() {
+                self.force_open = Some(true);
+            }
+            if ui.small_button("▸").on_hover_text("Colapsar todo").clicked() {
+                self.force_open = Some(false);
             }
             if scanning {
                 ui.spinner();
@@ -417,6 +427,7 @@ impl SessionPanel {
         let projects = &self.projects;
         let metadata = &self.metadata;
         let groups = &self.groups;
+        let force_open = self.force_open;
 
         egui::ScrollArea::vertical().show(ui, |ui| match self.group_mode {
             GroupMode::Provider => {
@@ -444,6 +455,7 @@ impl SessionPanel {
                             .strong(),
                     )
                         .id_salt(("provider", gi))
+                        .open(force_open)
                         .default_open(!visible.is_empty())
                         .show(ui, |ui| {
                             if let Some(s) = &group.status {
@@ -494,7 +506,8 @@ impl SessionPanel {
                         active,
                     ))
                     .id_salt(("project", bi))
-                        .default_open(true)
+                    .open(force_open)
+                    .default_open(true)
                         .show(ui, |ui| {
                             project_rename_row(ui, project, &mut to_rename_project);
                             let proj = (project.as_str() != NO_PROJECT).then(|| project.as_str());
@@ -535,6 +548,7 @@ impl SessionPanel {
                             .strong(),
                     )
                         .id_salt(("casc-prov", gi))
+                        .open(force_open)
                         .default_open(!visible.is_empty())
                         .show(ui, |ui| {
                             if let Some(s) = &group.status {
@@ -559,6 +573,7 @@ impl SessionPanel {
                                     active,
                                 ))
                                     .id_salt(("casc-proj", gi, pi))
+                                    .open(force_open)
                                     .default_open(true)
                                     .show(ui, |ui| {
                                         project_rename_row(ui, project, &mut to_rename_project);
@@ -625,6 +640,7 @@ impl SessionPanel {
             self.project_edit = Some((path, draft));
         }
         self.new_session_path = new_session_path;
+        self.force_open = None; // one-shot: applied this frame, then released
 
         self.editor_window(ui.ctx());
         self.project_window(ui.ctx());
