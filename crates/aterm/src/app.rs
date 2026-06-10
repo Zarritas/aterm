@@ -65,8 +65,7 @@ const TAB_SWATCHES: [(&str, egui::Color32); 6] = [
     ("Malva", egui::Color32::from_rgb(0xcb, 0xa6, 0xf7)),
 ];
 
-/// Default monospace point size for new terminals.
-const FONT_SIZE: f32 = 14.0;
+// Per-tab font zoom clamps (the default size comes from settings).
 const MIN_FONT: f32 = 7.0;
 const MAX_FONT: f32 = 40.0;
 
@@ -164,7 +163,8 @@ impl AtermApp {
             }
         }
 
-        let metrics = CellMetrics::measure(ctx, FONT_SIZE);
+        let term_font = crate::settings::get().term_font;
+        let metrics = CellMetrics::measure(ctx, term_font);
         let size = TermSize {
             columns: 80,
             lines: 24,
@@ -178,7 +178,7 @@ impl AtermApp {
                 self.tabs.push(Tab {
                     id,
                     term,
-                    font_size: FONT_SIZE,
+                    font_size: term_font,
                     selecting: false,
                     key,
                     name: None,
@@ -267,16 +267,18 @@ impl eframe::App for AtermApp {
         let mut pending_open: Option<(Vec<String>, Option<std::path::PathBuf>, Option<String>)> =
             None;
 
-        // Auto-close tabs whose child has exited (`exit` / Ctrl+D) instead of
-        // leaving an `[exited N]` placeholder behind.
-        let exited: Vec<u64> = self
-            .tabs
-            .iter()
-            .filter(|t| t.term.exit_code().is_some())
-            .map(|t| t.id)
-            .collect();
-        for id in exited {
-            self.close_tab(id);
+        // Auto-close tabs whose child has exited (`exit` / Ctrl+D) — unless the
+        // user prefers to keep the `[exited N]` placeholder.
+        if crate::settings::get().auto_close_on_exit {
+            let exited: Vec<u64> = self
+                .tabs
+                .iter()
+                .filter(|t| t.term.exit_code().is_some())
+                .map(|t| t.id)
+                .collect();
+            for id in exited {
+                self.close_tab(id);
+            }
         }
 
         // Header first → it spans the full width on top; the session panel sits
@@ -293,10 +295,10 @@ impl eframe::App for AtermApp {
                 ui.separator();
                 if ui
                     .button(">_")
-                    .on_hover_text("Nueva shell (en ~)")
+                    .on_hover_text("Nueva shell")
                     .clicked()
                 {
-                    pending_open = Some((vec![default_shell()], home_dir(), None));
+                    pending_open = Some((shell_argv(), shell_dir(), None));
                 }
                 ui.separator();
                 let mut to_close = None;
@@ -472,28 +474,101 @@ impl eframe::App for AtermApp {
 }
 
 impl AtermApp {
-    /// Settings popup (theme, …), opened from the header cog.
+    /// Settings popup, opened from the header cog.
     fn settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
+        let initial = crate::settings::get();
+        let mut s = initial.clone();
+        let mut reapply_theme = false;
+
         egui::Window::new("Ajustes")
             .open(&mut open)
             .resizable(false)
             .collapsible(false)
+            .default_width(320.0)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Tema:");
-                    let current = crate::theme::current_name();
-                    egui::ComboBox::from_id_salt("settings-theme")
-                        .selected_text(&current)
-                        .show_ui(ui, |ui| {
-                            for (name, _) in crate::theme::THEMES {
-                                if ui.selectable_label(current == name, name).clicked() {
-                                    crate::theme::select(ui.ctx(), name);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("Apariencia");
+                    ui.horizontal(|ui| {
+                        ui.label("Tema:");
+                        let current = crate::theme::current_name();
+                        egui::ComboBox::from_id_salt("settings-theme")
+                            .selected_text(&current)
+                            .show_ui(ui, |ui| {
+                                for (name, _) in crate::theme::THEMES {
+                                    if ui.selectable_label(current == name, name).clicked() {
+                                        crate::theme::select(ui.ctx(), name);
+                                    }
                                 }
-                            }
-                        });
+                            });
+                    });
+                    if ui
+                        .add(egui::Slider::new(&mut s.ui_font, 11.0..=22.0).text("Fuente UI"))
+                        .changed()
+                    {
+                        reapply_theme = true;
+                    }
+                    ui.add(
+                        egui::Slider::new(&mut s.term_font, 8.0..=28.0).text("Fuente terminal"),
+                    );
+                    ui.label(
+                        egui::RichText::new("La fuente del terminal aplica a pestañas nuevas.")
+                            .small()
+                            .weak(),
+                    );
+
+                    ui.add_space(8.0);
+                    ui.heading("Terminal");
+                    ui.checkbox(&mut s.auto_close_on_exit, "Cerrar la pestaña al salir (exit)");
+                    ui.horizontal(|ui| {
+                        ui.label("Shell:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut s.shell_command)
+                                .hint_text("$SHELL")
+                                .desired_width(180.0),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Dir. inicial:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut s.shell_dir)
+                                .hint_text("~ (home)")
+                                .desired_width(180.0),
+                        );
+                    });
+
+                    ui.add_space(8.0);
+                    ui.heading("Panel de sesiones");
+                    ui.label("Proveedores a escanear:");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.checkbox(&mut s.scan_claude, "Claude");
+                        ui.checkbox(&mut s.scan_codex, "Codex");
+                        ui.checkbox(&mut s.scan_opencode, "OpenCode");
+                        ui.checkbox(&mut s.scan_gemini, "Gemini");
+                    });
+                    ui.checkbox(&mut s.fetch_status, "Consultar estado y quota (red)");
+                    ui.horizontal(|ui| {
+                        ui.label("Auto-refresco:");
+                        ui.add(egui::Slider::new(&mut s.refresh_secs, 15..=600).suffix(" s"));
+                    });
                 });
             });
+
+        // Persist + react only when something actually changed.
+        if s != initial {
+            let providers_changed = s.scan_claude != initial.scan_claude
+                || s.scan_codex != initial.scan_codex
+                || s.scan_opencode != initial.scan_opencode
+                || s.scan_gemini != initial.scan_gemini
+                || s.fetch_status != initial.fetch_status;
+            crate::settings::update(|cur| *cur = s);
+            if reapply_theme {
+                crate::theme::apply(ctx);
+            }
+            if providers_changed {
+                self.panel.request_rescan();
+            }
+        }
         self.settings_open = open;
     }
 
@@ -841,7 +916,7 @@ impl AtermApp {
                                 continue;
                             }
                             egui::Key::Num0 => {
-                                self.tabs[idx].font_size = FONT_SIZE;
+                                self.tabs[idx].font_size = crate::settings::get().term_font;
                                 continue;
                             }
                             egui::Key::C if modifiers.shift => {
@@ -896,9 +971,31 @@ fn default_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
 }
 
-/// The user's home directory, where a plain `+ shell` should start.
+/// The user's home directory.
 fn home_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
+}
+
+/// argv for the `>_` button: the configured command (whitespace-split), or
+/// `$SHELL` when unset.
+fn shell_argv() -> Vec<String> {
+    let cmd = crate::settings::get().shell_command;
+    let parts: Vec<String> = cmd.split_whitespace().map(str::to_string).collect();
+    if parts.is_empty() {
+        vec![default_shell()]
+    } else {
+        parts
+    }
+}
+
+/// Start directory for the `>_` button: the configured path, or `$HOME`.
+fn shell_dir() -> Option<std::path::PathBuf> {
+    let dir = crate::settings::get().shell_dir;
+    if dir.trim().is_empty() {
+        home_dir()
+    } else {
+        Some(std::path::PathBuf::from(dir.trim()))
+    }
 }
 
 fn truncate(s: &str, max: usize) -> String {

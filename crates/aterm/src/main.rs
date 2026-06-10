@@ -10,6 +10,7 @@
 
 mod app;
 mod service_status;
+mod settings;
 mod sessions;
 mod term;
 mod theme;

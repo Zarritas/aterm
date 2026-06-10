@@ -232,9 +232,10 @@ impl SessionPanel {
         }
     }
 
-    /// Auto-refresh interval: keeps quota/status/live badges reasonably fresh
-    /// without hammering `opencode session list` (which shells out).
-    const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(120);
+    /// Auto-refresh interval from settings (kept sane, never under 15s).
+    fn refresh_every() -> std::time::Duration {
+        std::time::Duration::from_secs(crate::settings::get().refresh_secs.max(15))
+    }
 
     fn maybe_auto_refresh(&mut self, ctx: &egui::Context) {
         if self.scan_rx.is_some() {
@@ -242,10 +243,15 @@ impl SessionPanel {
         }
         let stale = self
             .last_scan_at
-            .map_or(false, |t| t.elapsed() >= Self::REFRESH_EVERY);
+            .map_or(false, |t| t.elapsed() >= Self::refresh_every());
         if stale {
             self.start_scan(ctx);
         }
+    }
+
+    /// Force a re-scan on the next frame (used after settings change).
+    pub fn request_rescan(&mut self) {
+        self.scanned = false;
     }
 
     fn save_metadata(&mut self) {
@@ -265,7 +271,7 @@ impl SessionPanel {
         self.poll_scan();
         self.maybe_auto_refresh(ui.ctx());
         // Wake periodically so the auto-refresh fires even when idle.
-        ui.ctx().request_repaint_after(Self::REFRESH_EVERY);
+        ui.ctx().request_repaint_after(Self::refresh_every());
         let scanning = self.scan_rx.is_some();
         let mut action = None;
 
@@ -1101,14 +1107,20 @@ fn row_ui(
     ui.add_space(6.0);
 }
 
-/// Scan every provider (list sessions + quota). Runs off the UI thread.
+/// Scan the enabled providers (list sessions + quota). Runs off the UI thread.
 fn scan_all_providers() -> Vec<ProviderGroup> {
+    let cfg = crate::settings::get();
     all_providers()
         .into_iter()
+        .filter(|p| cfg.scans(p.id()))
         .map(|p| {
             let display_name = p.display_name().to_string();
-            let quota = p.quota();
-            let status = crate::service_status::fetch(p.id());
+            let quota = if cfg.fetch_status { p.quota() } else { None };
+            let status = if cfg.fetch_status {
+                crate::service_status::fetch(p.id())
+            } else {
+                None
+            };
             match p.list_sessions() {
                 Ok(mut sessions) => {
                     for s in &mut sessions {

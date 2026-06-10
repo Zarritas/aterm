@@ -237,12 +237,13 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.indent = 14.0;
     style.spacing.scroll = egui::style::ScrollStyle::thin();
     use egui::{FontFamily::Proportional, FontId, TextStyle};
+    let ui_font = crate::settings::get().ui_font;
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(20.0, Proportional)),
-        (TextStyle::Body, FontId::new(15.5, Proportional)),
-        (TextStyle::Button, FontId::new(15.5, Proportional)),
-        (TextStyle::Small, FontId::new(13.0, Proportional)),
-        (TextStyle::Monospace, FontId::new(14.0, egui::FontFamily::Monospace)),
+        (TextStyle::Heading, FontId::new(ui_font + 4.5, Proportional)),
+        (TextStyle::Body, FontId::new(ui_font, Proportional)),
+        (TextStyle::Button, FontId::new(ui_font, Proportional)),
+        (TextStyle::Small, FontId::new((ui_font - 2.5).max(9.0), Proportional)),
+        (TextStyle::Monospace, FontId::new(ui_font - 1.5, egui::FontFamily::Monospace)),
     ]
     .into();
     ctx.set_style(style);
