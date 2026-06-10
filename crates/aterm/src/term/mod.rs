@@ -18,7 +18,7 @@ use alacritty_terminal::event::{
 };
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg, Notifier};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Point, Side};
+use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{Config, Term, TermMode};
@@ -208,6 +208,51 @@ impl TermInstance {
     /// The selected text, if any, in reading order.
     pub fn selection_text(&self) -> Option<String> {
         self.term.lock().selection_to_string()
+    }
+
+    /// Search the grid + scrollback upward for `query` (case-insensitive),
+    /// starting above `before_line` (or from the bottom when `None`). On a hit,
+    /// scrolls it into view, selects it, and returns the matched buffer line so
+    /// the caller can continue searching further up.
+    pub fn search_up(&self, query: &str, before_line: Option<i32>) -> Option<i32> {
+        if query.is_empty() {
+            return None;
+        }
+        let needle = query.to_lowercase();
+        let mut term = self.term.lock();
+
+        let (line, col, cols) = {
+            let grid = term.grid();
+            let top = grid.topmost_line().0;
+            let bottom = grid.bottommost_line().0;
+            let cols = grid.columns();
+            let start = before_line.map_or(bottom, |l| l - 1).min(bottom);
+            let mut hit = None;
+            let mut l = start;
+            while l >= top {
+                let row = &grid[Line(l)];
+                let text: String = (0..cols).map(|c| row[Column(c)].c).collect();
+                if let Some(pos) = text.to_lowercase().find(&needle) {
+                    // Byte offset → column (cell) index.
+                    let col = text[..pos].chars().count();
+                    hit = Some((l, col));
+                    break;
+                }
+                l -= 1;
+            }
+            match hit {
+                Some((l, c)) => (l, c, cols),
+                None => return None,
+            }
+        };
+
+        let point = Point::new(Line(line), Column(col));
+        term.scroll_to_point(point);
+        let end = (col + needle.chars().count()).saturating_sub(1).min(cols - 1);
+        let mut sel = Selection::new(SelectionType::Simple, point, Side::Left);
+        sel.update(Point::new(Line(line), Column(end)), Side::Right);
+        term.selection = Some(sel);
+        Some(line)
     }
 
     /// Tab label: the OSC-2 title set by the child, else the spawn command,

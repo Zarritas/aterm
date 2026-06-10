@@ -118,6 +118,8 @@ pub struct SessionPanel {
     scanned: bool,
     /// Channel carrying the result of an in-flight background scan, if any.
     scan_rx: Option<Receiver<Vec<ProviderGroup>>>,
+    /// When the last scan finished, to drive periodic auto-refresh.
+    last_scan_at: Option<std::time::Instant>,
     filter: String,
     group_mode: GroupMode,
     /// Active "folder": when set, only sessions carrying this tag are shown.
@@ -153,6 +155,7 @@ impl Default for SessionPanel {
             groups: Vec::new(),
             scanned: false,
             scan_rx: None,
+            last_scan_at: None,
             filter: String::new(),
             group_mode: GroupMode::Provider,
             tag_filter: None,
@@ -199,7 +202,24 @@ impl SessionPanel {
                 self.groups = groups;
                 self.scanned = true;
                 self.scan_rx = None;
+                self.last_scan_at = Some(std::time::Instant::now());
             }
+        }
+    }
+
+    /// Auto-refresh interval: keeps quota/status/live badges reasonably fresh
+    /// without hammering `opencode session list` (which shells out).
+    const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(120);
+
+    fn maybe_auto_refresh(&mut self, ctx: &egui::Context) {
+        if self.scan_rx.is_some() {
+            return;
+        }
+        let stale = self
+            .last_scan_at
+            .map_or(false, |t| t.elapsed() >= Self::REFRESH_EVERY);
+        if stale {
+            self.start_scan(ctx);
         }
     }
 
@@ -218,6 +238,9 @@ impl SessionPanel {
             self.start_scan(ui.ctx());
         }
         self.poll_scan();
+        self.maybe_auto_refresh(ui.ctx());
+        // Wake periodically so the auto-refresh fires even when idle.
+        ui.ctx().request_repaint_after(Self::REFRESH_EVERY);
         let scanning = self.scan_rx.is_some();
         let mut action = None;
 

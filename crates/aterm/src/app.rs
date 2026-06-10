@@ -136,6 +136,11 @@ pub struct AtermApp {
     clipboard: Option<arboard::Clipboard>,
     /// Set after opening/focusing a tab so it grabs keyboard focus next frame.
     focus_pending: bool,
+    /// Scrollback search bar state (toggled with Ctrl+Shift+F).
+    search_open: bool,
+    search_query: String,
+    /// Buffer line of the last match, so "previous" continues further up.
+    search_last: Option<i32>,
 }
 
 impl Default for AtermApp {
@@ -148,6 +153,9 @@ impl Default for AtermApp {
             focused: 0,
             clipboard: arboard::Clipboard::new().ok(),
             focus_pending: false,
+            search_open: false,
+            search_query: String::new(),
+            search_last: None,
         }
     }
 }
@@ -246,6 +254,19 @@ impl AtermApp {
         self.tabs.iter().position(|t| t.id == id)
     }
 
+    /// Move tab `src` to sit before tab `dst` in the bar.
+    fn reorder_tab(&mut self, src: u64, dst: u64) {
+        if src == dst {
+            return;
+        }
+        let Some(from) = self.tab_index(src) else {
+            return;
+        };
+        let tab = self.tabs.remove(from);
+        let to = self.tab_index(dst).unwrap_or(self.tabs.len());
+        self.tabs.insert(to, tab);
+    }
+
     fn copy(&mut self, text: String) {
         if let Some(cb) = self.clipboard.as_mut() {
             let _ = cb.set_text(text);
@@ -280,6 +301,7 @@ impl eframe::App for AtermApp {
                 let mut to_close = None;
                 let mut to_focus = None;
                 let mut to_split = None;
+                let mut to_reorder: Option<(u64, u64)> = None;
                 for tab in &self.tabs {
                     let id = tab.id;
                     let shown = self.visible.contains(&id);
@@ -289,8 +311,16 @@ impl eframe::App for AtermApp {
                     if id == self.focused {
                         text = text.color(egui::Color32::from_rgb(0xb4, 0xbe, 0xfe));
                     }
-                    if ui.selectable_label(shown, text).clicked() {
+                    // The label is a drag source (reorder) and a drop target.
+                    let drag_id = egui::Id::new(("tab-drag", id));
+                    let resp = ui
+                        .dnd_drag_source(drag_id, id, |ui| ui.selectable_label(shown, text))
+                        .inner;
+                    if resp.clicked() {
                         to_focus = Some(id);
+                    }
+                    if let Some(src) = resp.dnd_release_payload::<u64>() {
+                        to_reorder = Some((*src, id));
                     }
                     if ui
                         .small_button("⊞")
@@ -303,6 +333,9 @@ impl eframe::App for AtermApp {
                         to_close = Some(id);
                     }
                     ui.separator();
+                }
+                if let Some((src, dst)) = to_reorder {
+                    self.reorder_tab(src, dst);
                 }
                 if let Some(id) = to_focus {
                     self.focus_tab(id);
@@ -352,12 +385,48 @@ impl eframe::App for AtermApp {
                 )));
             }
 
+            if self.search_open {
+                self.search_bar(ui);
+            }
             self.render_panes(ui);
         });
     }
 }
 
 impl AtermApp {
+    /// Scrollback search bar for the focused pane (Ctrl+Shift+F toggles it).
+    fn search_bar(&mut self, ui: &mut egui::Ui) {
+        let Some(idx) = self.tab_index(self.focused) else {
+            return;
+        };
+        let mut search = false;
+        ui.horizontal(|ui| {
+            ui.label("Buscar:");
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.search_query)
+                    .hint_text("texto en el scrollback…")
+                    .desired_width(240.0),
+            );
+            if resp.changed() {
+                self.search_last = None; // new query → search from the bottom
+            }
+            let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if enter || ui.button("▲").on_hover_text("Anterior coincidencia").clicked() {
+                search = true;
+            }
+            if ui.button("×").on_hover_text("Cerrar (Ctrl+Shift+F)").clicked() {
+                self.search_open = false;
+            }
+        });
+        if search {
+            let query = self.search_query.clone();
+            match self.tabs[idx].term.search_up(&query, self.search_last) {
+                Some(line) => self.search_last = Some(line),
+                None => self.search_last = None, // wrap: next search starts over
+            }
+        }
+    }
+
     /// Tile the visible tabs into a near-square grid of panes.
     fn render_panes(&mut self, ui: &mut egui::Ui) {
         let ids: Vec<u64> = self.visible.clone();
@@ -626,6 +695,11 @@ impl AtermApp {
                                 if let Some(t) = self.paste_text() {
                                     self.paste_into(idx, &t, modes.bracketed_paste);
                                 }
+                                continue;
+                            }
+                            egui::Key::F if modifiers.shift => {
+                                self.search_open = !self.search_open;
+                                self.search_last = None;
                                 continue;
                             }
                             _ => {}
