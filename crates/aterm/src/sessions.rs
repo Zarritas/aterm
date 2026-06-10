@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_sessions::{
     all_providers, encode_cwd, export_sessions, import_archive, import_archive_routed, parse_tags,
+    transfer::move_session,
     types::{AgentSession, DeleteError, PreviewTurn, ProviderQuota},
     AgentProvider, ExportItem, MetadataStore,
 };
@@ -102,6 +103,15 @@ struct PreviewState {
     turns: Result<Vec<PreviewTurn>, String>,
 }
 
+/// In-flight "move a Claude session to another project" dialog.
+struct MoveState {
+    id: String,
+    source_cwd: String,
+    is_live: bool,
+    /// Destination path draft (free text + autocomplete).
+    dest: String,
+}
+
 pub struct SessionPanel {
     groups: Vec<ProviderGroup>,
     /// Set once a scan has populated `groups` at least once.
@@ -120,6 +130,7 @@ pub struct SessionPanel {
     project_edit: Option<(String, String)>,
     edit: Option<EditState>,
     preview: Option<PreviewState>,
+    move_select: Option<MoveState>,
     import_path: String,
     /// Import destination provider id (only "claude" is wired today).
     import_provider: String,
@@ -152,6 +163,7 @@ impl Default for SessionPanel {
             project_edit: None,
             edit: None,
             preview: None,
+            move_select: None,
             import_path: String::new(),
             import_provider: "claude".to_string(),
             import_project: None,
@@ -364,6 +376,7 @@ impl SessionPanel {
         let mut to_preview: Option<(String, String, String)> = None;
         let mut to_export: Option<(usize, usize)> = None;
         let mut to_delete: Option<(usize, usize, bool)> = None;
+        let mut to_move: Option<(String, String, bool)> = None;
         let mut to_rename_project: Option<String> = None;
         // Take the new-session path draft out of `self` so the scroll closure
         // can mutate it without clashing with the immutable `self` borrows
@@ -418,7 +431,7 @@ impl SessionPanel {
                                 row_ui(
                                     ui, s, metadata.get(provider_id, &s.id), provider_id, gi, si,
                                     false, &mut action, &mut to_edit, &mut to_preview,
-                                    &mut to_export, &mut to_delete,
+                                    &mut to_export, &mut to_delete, &mut to_move,
                                 );
                             }
                         });
@@ -450,7 +463,7 @@ impl SessionPanel {
                                 row_ui(
                                     ui, s, metadata.get(group.provider.id(), &s.id),
                                     group.provider.id(), *gi, *si, true, &mut action, &mut to_edit,
-                                    &mut to_preview, &mut to_export, &mut to_delete,
+                                    &mut to_preview, &mut to_export, &mut to_delete, &mut to_move,
                                 );
                             }
                         });
@@ -509,7 +522,7 @@ impl SessionPanel {
                                             row_ui(
                                                 ui, s, metadata.get(provider_id, &s.id), provider_id,
                                                 gi, *si, false, &mut action, &mut to_edit,
-                                                &mut to_preview, &mut to_export, &mut to_delete,
+                                                &mut to_preview, &mut to_export, &mut to_delete, &mut to_move,
                                             );
                                         }
                                     });
@@ -532,6 +545,14 @@ impl SessionPanel {
         if let Some((gi, si, force)) = to_delete {
             self.do_delete(gi, si, force);
         }
+        if let Some((id, source_cwd, is_live)) = to_move {
+            self.move_select = Some(MoveState {
+                id,
+                source_cwd: source_cwd.clone(),
+                is_live,
+                dest: source_cwd,
+            });
+        }
         if let Some(path) = to_rename_project {
             let draft = self.projects.get(&path).unwrap_or("").to_string();
             self.project_edit = Some((path, draft));
@@ -540,6 +561,7 @@ impl SessionPanel {
 
         self.editor_window(ui.ctx());
         self.project_window(ui.ctx());
+        self.move_window(ui.ctx());
         self.preview_window(ui.ctx());
 
         action
@@ -734,6 +756,90 @@ impl SessionPanel {
         }
     }
 
+    fn move_window(&mut self, ctx: &egui::Context) {
+        let Some(mv) = self.move_select.as_mut() else {
+            return;
+        };
+        // Known destination projects (Claude sessions' distinct cwds).
+        let mut projects: Vec<String> = self
+            .groups
+            .iter()
+            .find(|g| g.provider.id() == "claude")
+            .map(|g| {
+                let mut v: Vec<String> =
+                    g.sessions.iter().filter_map(|s| s.cwd.clone()).collect();
+                v.sort();
+                v.dedup();
+                v
+            })
+            .unwrap_or_default();
+        projects.retain(|p| p != &mv.source_cwd);
+
+        let mut open = true;
+        let mut go = false;
+        let mut cancel = false;
+        egui::Window::new("Mover sesión a proyecto")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.weak(format!("Desde: {}", display_path(&mv.source_cwd)));
+                ui.label("Destino:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut mv.dest)
+                        .hint_text("/ruta/al/proyecto")
+                        .desired_width(260.0),
+                );
+                // Autocomplete + known projects as quick picks.
+                let trimmed = mv.dest.trim().to_string();
+                if !trimmed.is_empty() && !std::path::Path::new(&trimmed).is_dir() {
+                    for c in path_candidates(&trimmed) {
+                        if c != trimmed && ui.selectable_label(false, completion_label(&c)).clicked()
+                        {
+                            mv.dest = c;
+                        }
+                    }
+                }
+                for p in &projects {
+                    if ui.selectable_label(false, display_path(p)).clicked() {
+                        mv.dest = p.clone();
+                    }
+                }
+                ui.horizontal(|ui| {
+                    let ok = !mv.dest.trim().is_empty() && mv.dest.trim() != mv.source_cwd;
+                    if ui.add_enabled(ok, egui::Button::new("Mover")).clicked() {
+                        go = true;
+                    }
+                    if ui.button("Cancelar").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        if go {
+            if let Some(mv) = self.move_select.take() {
+                self.do_move(&mv);
+            }
+        } else if cancel || !open {
+            self.move_select = None;
+        }
+    }
+
+    fn do_move(&mut self, mv: &MoveState) {
+        let projects = home_dir().join(".claude/projects");
+        let src = encode_cwd(&mv.source_cwd);
+        let dst = encode_cwd(mv.dest.trim());
+        match move_session(&projects, &mv.id, &src, &dst, |_| mv.is_live) {
+            Ok(()) => {
+                self.status = Some(format!("Movida a {}", display_path(mv.dest.trim())));
+                self.scanned = false; // re-scan to reflect the new project
+            }
+            Err(e) if e == "ACTIVE" => {
+                self.status = Some("No se puede mover una sesión activa".into());
+            }
+            Err(e) => self.status = Some(format!("Mover falló: {e}")),
+        }
+    }
+
     fn preview_window(&mut self, ctx: &egui::Context) {
         let Some(preview) = self.preview.as_ref() else {
             return;
@@ -784,6 +890,7 @@ fn row_ui(
     to_preview: &mut Option<(String, String, String)>,
     to_export: &mut Option<(usize, usize)>,
     to_delete: &mut Option<(usize, usize, bool)>,
+    to_move: &mut Option<(String, String, bool)>,
 ) {
     let name = meta
         .and_then(|m| m.name.clone())
@@ -873,6 +980,15 @@ fn row_ui(
         }
         if ui.small_button("⇩").on_hover_text("Exportar .zip").clicked() {
             *to_export = Some((gi, si));
+        }
+        // Re-route to another project — Claude only (its on-disk layout is the
+        // one `transfer::move_session` understands).
+        if provider_id == "claude" {
+            if let Some(cwd) = &s.cwd {
+                if ui.small_button("⇄").on_hover_text("Mover a otro proyecto").clicked() {
+                    *to_move = Some((s.id.clone(), cwd.clone(), s.is_active));
+                }
+            }
         }
         if ui.small_button("✖").on_hover_text("Eliminar").clicked() {
             // Force when the session is active (second-click semantics live in
