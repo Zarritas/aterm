@@ -515,7 +515,9 @@ impl AtermApp {
                             }
                         };
                         item(ui, cat, SettingsCat::Appearance, "  Apariencia");
+                        ui.separator();
                         item(ui, cat, SettingsCat::Terminal, "  Terminal");
+                        ui.separator();
                         item(ui, cat, SettingsCat::Panel, "  Panel de sesiones");
                     });
                     ui.separator();
