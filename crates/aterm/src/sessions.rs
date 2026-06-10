@@ -252,7 +252,7 @@ impl SessionPanel {
         let mut action = None;
 
         ui.horizontal(|ui| {
-            ui.heading(egui::RichText::new("Agent sessions").color(C_LAVENDER));
+            ui.heading(egui::RichText::new("Agent sessions").color(c_lavender()));
             let rescan = ui.add_enabled(!scanning, egui::Button::new("⟳"));
             if rescan.on_hover_text("Re-escanear").clicked() {
                 self.start_scan(ui.ctx());
@@ -266,6 +266,19 @@ impl SessionPanel {
             if scanning {
                 ui.spinner();
             }
+            // Theme picker, pushed to the right.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let current = crate::theme::current_name();
+                egui::ComboBox::from_id_salt("theme-picker")
+                    .selected_text(&current)
+                    .show_ui(ui, |ui| {
+                        for (name, _) in crate::theme::THEMES {
+                            if ui.selectable_label(current == name, name).clicked() {
+                                crate::theme::select(ui.ctx(), name);
+                            }
+                        }
+                    });
+            });
         });
 
         ui.horizontal(|ui| {
@@ -936,7 +949,7 @@ fn row_ui(
         .unwrap_or_else(|| "(sin título)".to_string());
 
     egui::Frame::none()
-        .fill(C_CARD)
+        .fill(c_card())
         .rounding(8.0)
         .inner_margin(egui::Margin::symmetric(10.0, 8.0))
         .show(ui, |ui| {
@@ -1006,7 +1019,7 @@ fn row_ui(
                 if !m.tags.is_empty() {
                     ui.horizontal_wrapped(|ui| {
                         for tag in &m.tags {
-                            ui.colored_label(C_TEAL, format!("#{tag}"));
+                            ui.colored_label(c_teal(), format!("#{tag}"));
                         }
                     });
                 }
@@ -1084,7 +1097,7 @@ fn scan_all_providers() -> Vec<ProviderGroup> {
 /// Service-health badge from the provider's statuspage indicator.
 fn status_badge(ui: &mut egui::Ui, status: &agent_sessions::types::ServiceStatus) {
     let (color, label) = match status.indicator.as_str() {
-        "none" => (C_GREEN, "operativo"),
+        "none" => (c_green(), "operativo"),
         "minor" => (egui::Color32::from_rgb(0xf9, 0xe2, 0xaf), "incidencia menor"),
         "major" => (egui::Color32::from_rgb(0xfa, 0xb3, 0x87), "incidencia grave"),
         "critical" => (egui::Color32::from_rgb(0xf3, 0x8b, 0xa8), "caída"),
@@ -1156,45 +1169,52 @@ fn tag_passes(
     }
 }
 
-// Catppuccin accents reused across the panel.
-const C_LAVENDER: egui::Color32 = egui::Color32::from_rgb(0xb4, 0xbe, 0xfe);
-const C_TEAL: egui::Color32 = egui::Color32::from_rgb(0x94, 0xe2, 0xd5);
-const C_GREEN: egui::Color32 = egui::Color32::from_rgb(0xa6, 0xe3, 0xa1);
-// Live-session states — kept visually distinct (orange vs green vs blue).
-const C_WORKING: egui::Color32 = egui::Color32::from_rgb(0xfa, 0xb3, 0x87); // peach/orange
-const C_WAITING: egui::Color32 = C_GREEN;
-const C_ACTIVE: egui::Color32 = egui::Color32::from_rgb(0x89, 0xb4, 0xfa); // blue
-const C_CARD: egui::Color32 = egui::Color32::from_rgb(0x28, 0x28, 0x3a); // session card bg
+// Accents pulled from the active theme (so a theme switch recolours the panel).
+fn c_lavender() -> egui::Color32 {
+    crate::theme::pal().lavender
+}
+fn c_teal() -> egui::Color32 {
+    crate::theme::pal().teal
+}
+fn c_green() -> egui::Color32 {
+    crate::theme::pal().green
+}
+fn c_card() -> egui::Color32 {
+    crate::theme::pal().card
+}
 
 /// Colour for any usage percentage (context, session quota, weekly quota):
 /// <40% green, 40–60% orange, ≥60% red.
 fn usage_color(pct: f64) -> egui::Color32 {
+    let p = crate::theme::pal();
     if pct < 40.0 {
-        C_GREEN
+        p.green
     } else if pct < 60.0 {
-        egui::Color32::from_rgb(0xfa, 0xb3, 0x87) // peach / orange
+        p.peach
     } else {
-        egui::Color32::from_rgb(0xf3, 0x8b, 0xa8) // red
+        p.red
     }
 }
 
 /// Colour + tooltip for a live session's status: working vs waiting.
 fn live_state(status: Option<&str>) -> (egui::Color32, &'static str) {
+    let p = crate::theme::pal();
     match status {
-        Some("busy") => (C_WORKING, "Trabajando"),
-        Some("idle") => (C_WAITING, "En espera"),
-        _ => (C_ACTIVE, "Activa"),
+        Some("busy") => (p.peach, "Trabajando"),
+        Some("idle") => (p.green, "En espera"),
+        _ => (p.blue, "Activa"),
     }
 }
 
 /// Brand-ish accent per provider, for the section headers.
 fn provider_color(id: &str) -> egui::Color32 {
+    let p = crate::theme::pal();
     match id {
-        "claude" => egui::Color32::from_rgb(0xfa, 0xb3, 0x87),   // peach
-        "codex" => egui::Color32::from_rgb(0xa6, 0xe3, 0xa1),    // green
-        "opencode" => egui::Color32::from_rgb(0x74, 0xc7, 0xec), // sapphire
-        "gemini" => egui::Color32::from_rgb(0xcb, 0xa6, 0xf7),   // mauve
-        _ => C_LAVENDER,
+        "claude" => p.peach,
+        "codex" => p.green,
+        "opencode" => p.sapphire,
+        "gemini" => p.mauve,
+        _ => p.lavender,
     }
 }
 
@@ -1212,7 +1232,7 @@ fn project_header(projects: &ProjectNames, path: &str, count: usize) -> egui::Ri
         .get(path)
         .map(str::to_string)
         .unwrap_or_else(|| display_path(path));
-    egui::RichText::new(format!("{label} ({count})")).color(C_TEAL)
+    egui::RichText::new(format!("{label} ({count})")).color(c_teal())
 }
 
 /// Live-session tally split by reported state, for the section headers.
@@ -1227,15 +1247,15 @@ impl StateCounts {
     /// Coloured `●N` badges (only for non-zero buckets).
     fn badges(self, ui: &mut egui::Ui) {
         if self.working > 0 {
-            ui.colored_label(C_WORKING, format!("●{}", self.working))
+            ui.colored_label(crate::theme::pal().peach, format!("●{}", self.working))
                 .on_hover_text("Trabajando");
         }
         if self.waiting > 0 {
-            ui.colored_label(C_WAITING, format!("●{}", self.waiting))
+            ui.colored_label(crate::theme::pal().green, format!("●{}", self.waiting))
                 .on_hover_text("En espera");
         }
         if self.other > 0 {
-            ui.colored_label(C_ACTIVE, format!("●{}", self.other))
+            ui.colored_label(crate::theme::pal().blue, format!("●{}", self.other))
                 .on_hover_text("Activa");
         }
     }

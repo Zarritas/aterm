@@ -12,6 +12,7 @@ mod app;
 mod service_status;
 mod sessions;
 mod term;
+mod theme;
 
 use eframe::egui;
 
@@ -27,7 +28,8 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             app::install_fonts(&cc.egui_ctx);
-            app::install_theme(&cc.egui_ctx);
+            theme::load_persisted();
+            theme::apply(&cc.egui_ctx);
             Ok(Box::<app::AtermApp>::default())
         }),
     )

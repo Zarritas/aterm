@@ -13,12 +13,14 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Stroke, Vec2};
 
 use super::TermInstance;
 
-/// Default foreground/background when the child hasn't overridden the palette.
-/// Tuned to match the app's Catppuccin Mocha chrome (base / text).
-const DEFAULT_FG: Rgb = Rgb { r: 0xcd, g: 0xd6, b: 0xf4 };
-const DEFAULT_BG: Rgb = Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
-/// Highlight behind selected cells (surface2).
-const SELECTION_BG: Rgb = Rgb { r: 0x58, g: 0x5b, b: 0x70 };
+/// Convert an egui `Color32` (from the active theme) to alacritty's `Rgb`.
+fn to_rgb(c: Color32) -> Rgb {
+    Rgb {
+        r: c.r(),
+        g: c.g(),
+        b: c.b(),
+    }
+}
 
 /// Pixel metrics for one monospaced cell, derived from the chosen egui font.
 #[derive(Clone, Copy)]
@@ -85,8 +87,14 @@ pub fn draw(
     let painter = ui.painter_at(rect);
     let origin = rect.min;
 
+    // Theme-driven terminal colours (fallbacks for unset fg/bg + selection).
+    let theme = crate::theme::pal();
+    let default_fg = to_rgb(theme.term_fg);
+    let default_bg = to_rgb(theme.term_bg);
+    let selection_bg = to_rgb(theme.selection);
+
     // Backdrop: the terminal default background under the whole panel.
-    painter.rect_filled(rect, 0.0, color32(DEFAULT_BG));
+    painter.rect_filled(rect, 0.0, color32(default_bg));
 
     let guard = term.term.lock();
     let content = guard.renderable_content();
@@ -124,8 +132,8 @@ pub fn draw(
         );
         let cell_rect = Rect::from_min_size(pos, Vec2::new(cell_w, metrics.height));
 
-        let mut fg = resolve(cell.fg, colors, cell.flags, true);
-        let mut bg = resolve(cell.bg, colors, cell.flags, false);
+        let mut fg = resolve(cell.fg, colors, cell.flags, true, default_fg, default_bg);
+        let mut bg = resolve(cell.bg, colors, cell.flags, false, default_fg, default_bg);
         if cell.flags.contains(Flags::INVERSE) {
             std::mem::swap(&mut fg, &mut bg);
         }
@@ -135,8 +143,8 @@ pub fn draw(
 
         let selected = selection.map_or(false, |r| r.contains(point));
         if selected {
-            painter.rect_filled(cell_rect, 0.0, color32(SELECTION_BG));
-        } else if bg != DEFAULT_BG {
+            painter.rect_filled(cell_rect, 0.0, color32(selection_bg));
+        } else if bg != default_bg {
             painter.rect_filled(cell_rect, 0.0, color32(bg));
         }
 
@@ -159,7 +167,15 @@ pub fn draw(
 
     // Cursor only when not scrolled into history and not explicitly hidden.
     if !scrolled && cursor_shape != CursorShape::Hidden {
-        draw_cursor(&painter, origin, metrics, cursor_shape, cursor_point, focused);
+        draw_cursor(
+            &painter,
+            origin,
+            metrics,
+            cursor_shape,
+            cursor_point,
+            focused,
+            color32(default_fg),
+        );
     }
 
     response
@@ -172,6 +188,7 @@ fn draw_cursor(
     shape: CursorShape,
     p: alacritty_terminal::index::Point,
     focused: bool,
+    cur: Color32,
 ) {
     if p.line.0 < 0 {
         return;
@@ -181,7 +198,6 @@ fn draw_cursor(
         origin.y + p.line.0 as f32 * metrics.height,
     );
     let cell_rect = Rect::from_min_size(pos, Vec2::new(metrics.width, metrics.height));
-    let cur = color32(DEFAULT_FG);
 
     if !focused {
         // Unfocused window: hollow box regardless of shape.
@@ -215,6 +231,8 @@ fn resolve(
     colors: &alacritty_terminal::term::color::Colors,
     flags: Flags,
     is_fg: bool,
+    default_fg: Rgb,
+    default_bg: Rgb,
 ) -> Rgb {
     match color {
         Color::Spec(rgb) => rgb,
@@ -233,7 +251,7 @@ fn resolve(
             } else {
                 named
             };
-            colors[named].unwrap_or_else(|| named_default(named))
+            colors[named].unwrap_or_else(|| named_default(named, default_fg, default_bg))
         }
     }
 }
@@ -254,13 +272,13 @@ fn bright(c: NamedColor) -> NamedColor {
     }
 }
 
-fn named_default(c: NamedColor) -> Rgb {
+fn named_default(c: NamedColor, default_fg: Rgb, default_bg: Rgb) -> Rgb {
     use NamedColor::*;
     match c {
-        Foreground | BrightForeground => DEFAULT_FG,
-        Background => DEFAULT_BG,
-        Cursor => DEFAULT_FG,
-        DimForeground => dim(DEFAULT_FG),
+        Foreground | BrightForeground => default_fg,
+        Background => default_bg,
+        Cursor => default_fg,
+        DimForeground => dim(default_fg),
         Black => palette(0),
         Red => palette(1),
         Green => palette(2),
