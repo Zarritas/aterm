@@ -178,6 +178,8 @@ pub struct AtermApp {
     dragging: Option<u64>,
     /// Open tab rename/colour dialog.
     tab_edit: Option<TabEdit>,
+    /// Whether the left session panel is shown.
+    panel_open: bool,
 }
 
 impl Default for AtermApp {
@@ -195,6 +197,7 @@ impl Default for AtermApp {
             search_last: None,
             dragging: None,
             tab_edit: None,
+            panel_open: true,
         }
     }
 }
@@ -341,7 +344,7 @@ impl eframe::App for AtermApp {
         egui::SidePanel::left("sessions")
             .resizable(true)
             .default_width(380.0)
-            .show(ctx, |ui| {
+            .show_animated(ctx, self.panel_open, |ui| {
                 if let Some(PanelAction::Open { argv, cwd, key }) = self.panel.ui(ui) {
                     pending_open = Some((argv, cwd, key));
                 }
@@ -349,6 +352,15 @@ impl eframe::App for AtermApp {
 
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                let toggle = if self.panel_open { "◀" } else { "▶" };
+                if ui
+                    .button(toggle)
+                    .on_hover_text("Mostrar/ocultar el panel de sesiones")
+                    .clicked()
+                {
+                    self.panel_open = !self.panel_open;
+                }
+                ui.separator();
                 if ui.button("+ shell").clicked() {
                     pending_open = Some((vec![default_shell()], home_dir(), None));
                 }
