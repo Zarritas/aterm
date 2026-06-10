@@ -291,7 +291,11 @@ impl eframe::App for AtermApp {
                     self.panel_open = !self.panel_open;
                 }
                 ui.separator();
-                if ui.button("+ shell").clicked() {
+                if ui
+                    .button("❯")
+                    .on_hover_text("Nueva shell (en ~)")
+                    .clicked()
+                {
                     pending_open = Some((vec![default_shell()], home_dir(), None));
                 }
                 ui.separator();
@@ -439,7 +443,7 @@ impl eframe::App for AtermApp {
                 ui.heading("Terminal");
                 ui.separator();
                 ui.label(
-                    "Pulsa «+ shell» para abrir una shell, o «▶» en una sesión \
+                    "Pulsa «❯» para abrir una shell, o «▶» en una sesión \
                      del panel para reanudarla.",
                 );
                 return;
