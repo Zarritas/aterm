@@ -819,7 +819,11 @@ impl AtermApp {
             (col, line)
         };
 
-        if modes.mouse_report {
+        // When the child captures the mouse (TUIs like Claude), forward events
+        // to it — unless Shift is held, the standard override to select/copy
+        // locally instead.
+        let shift = ui.input(|i| i.modifiers.shift);
+        if modes.mouse_report && !shift {
             self.report_mouse(ui, response, modes, &cell_at, idx);
             return;
         }
