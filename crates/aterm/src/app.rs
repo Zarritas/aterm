@@ -115,6 +115,8 @@ pub struct AtermApp {
     tab_edit: Option<TabEdit>,
     /// Whether the left session panel is shown.
     panel_open: bool,
+    /// Whether the settings window is open.
+    settings_open: bool,
 }
 
 impl Default for AtermApp {
@@ -133,6 +135,7 @@ impl Default for AtermApp {
             dragging: None,
             tab_edit: None,
             panel_open: true,
+            settings_open: false,
         }
     }
 }
@@ -276,20 +279,12 @@ impl eframe::App for AtermApp {
             self.close_tab(id);
         }
 
-        egui::SidePanel::left("sessions")
-            .resizable(true)
-            .default_width(380.0)
-            .show_animated(ctx, self.panel_open, |ui| {
-                if let Some(PanelAction::Open { argv, cwd, key }) = self.panel.ui(ui) {
-                    pending_open = Some((argv, cwd, key));
-                }
-            });
-
-        egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
+        // Header first → it spans the full width on top; the session panel sits
+        // *below* it on the left (so the sidebar never overlaps the header).
+        egui::TopBottomPanel::top("header").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let toggle = if self.panel_open { "◀" } else { "▶" };
                 if ui
-                    .button(toggle)
+                    .selectable_label(self.panel_open, "☰")
                     .on_hover_text("Mostrar/ocultar el panel de sesiones")
                     .clicked()
                 {
@@ -406,8 +401,24 @@ impl eframe::App for AtermApp {
                 if let Some(id) = to_close {
                     self.close_tab(id);
                 }
+
+                // Settings cog, pushed to the right edge of the header.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("⚙").on_hover_text("Ajustes").clicked() {
+                        self.settings_open = true;
+                    }
+                });
             });
         });
+
+        egui::SidePanel::left("sessions")
+            .resizable(true)
+            .default_width(380.0)
+            .show_animated(ctx, self.panel_open, |ui| {
+                if let Some(PanelAction::Open { argv, cwd, key }) = self.panel.ui(ui) {
+                    pending_open = Some((argv, cwd, key));
+                }
+            });
 
         if let Some((argv, cwd, key)) = pending_open {
             self.open_tab(ctx, argv, cwd, key);
@@ -452,10 +463,36 @@ impl eframe::App for AtermApp {
         });
 
         self.tab_edit_window(ctx);
+        self.settings_window(ctx);
     }
 }
 
 impl AtermApp {
+    /// Settings popup (theme, …), opened from the header cog.
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.settings_open;
+        egui::Window::new("Ajustes")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Tema:");
+                    let current = crate::theme::current_name();
+                    egui::ComboBox::from_id_salt("settings-theme")
+                        .selected_text(&current)
+                        .show_ui(ui, |ui| {
+                            for (name, _) in crate::theme::THEMES {
+                                if ui.selectable_label(current == name, name).clicked() {
+                                    crate::theme::select(ui.ctx(), name);
+                                }
+                            }
+                        });
+                });
+            });
+        self.settings_open = open;
+    }
+
     /// Rename / recolour the active tab (opened by right-clicking its label).
     fn tab_edit_window(&mut self, ctx: &egui::Context) {
         let Some(edit) = self.tab_edit.as_mut() else {

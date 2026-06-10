@@ -33,6 +33,9 @@ enum GroupMode {
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 struct ProjectNames {
     names: std::collections::HashMap<String, String>,
+    /// Per-project accent colour as `#rrggbb` (optional).
+    #[serde(default)]
+    colors: std::collections::HashMap<String, String>,
 }
 
 impl ProjectNames {
@@ -60,6 +63,21 @@ impl ProjectNames {
             self.names.remove(path);
         } else {
             self.names.insert(path.to_string(), name.trim().to_string());
+        }
+    }
+
+    fn color(&self, path: &str) -> Option<egui::Color32> {
+        self.colors.get(path).and_then(|h| parse_hex(h))
+    }
+
+    fn set_color(&mut self, path: &str, hex: Option<String>) {
+        match hex {
+            Some(h) => {
+                self.colors.insert(path.to_string(), h);
+            }
+            None => {
+                self.colors.remove(path);
+            }
         }
     }
 }
@@ -266,19 +284,6 @@ impl SessionPanel {
             if scanning {
                 ui.spinner();
             }
-            // Theme picker, pushed to the right.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let current = crate::theme::current_name();
-                egui::ComboBox::from_id_salt("theme-picker")
-                    .selected_text(&current)
-                    .show_ui(ui, |ui| {
-                        for (name, _) in crate::theme::THEMES {
-                            if ui.selectable_label(current == name, name).clicked() {
-                                crate::theme::select(ui.ctx(), name);
-                            }
-                        }
-                    });
-            });
         });
 
         ui.horizontal(|ui| {
@@ -778,12 +783,43 @@ impl SessionPanel {
         let mut open = true;
         let mut save = false;
         let mut cancel = false;
-        egui::Window::new("Nombre del proyecto")
+        let mut set_color: Option<Option<String>> = None;
+        egui::Window::new("Proyecto")
             .open(&mut open)
             .resizable(false)
+            .collapsible(false)
             .show(ctx, |ui| {
                 ui.weak(path_label);
+                ui.label("Nombre:");
                 ui.text_edit_singleline(draft);
+                ui.separator();
+                ui.label("Color:");
+                ui.horizontal_wrapped(|ui| {
+                    let p = crate::theme::pal();
+                    let swatches = [
+                        ("Lavanda", p.lavender),
+                        ("Verde", p.green),
+                        ("Amarillo", p.yellow),
+                        ("Melocotón", p.peach),
+                        ("Rojo", p.red),
+                        ("Malva", p.mauve),
+                        ("Turquesa", p.teal),
+                        ("Zafiro", p.sapphire),
+                    ];
+                    for (name, c) in swatches {
+                        if ui
+                            .add(egui::Button::new("  ").fill(c).min_size(egui::vec2(22.0, 18.0)))
+                            .on_hover_text(name)
+                            .clicked()
+                        {
+                            set_color = Some(Some(hex_of(c)));
+                        }
+                    }
+                    if ui.button("Sin color").clicked() {
+                        set_color = Some(None);
+                    }
+                });
+                ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Guardar").clicked() {
                         save = true;
@@ -794,6 +830,13 @@ impl SessionPanel {
                 });
             });
 
+        // Colour swatches apply immediately (the window stays open).
+        if let Some(hex) = set_color {
+            if let Some(p) = self.project_edit.as_ref().map(|(p, _)| p.clone()) {
+                self.projects.set_color(&p, hex);
+                let _ = self.projects.save(&self.projects_path);
+            }
+        }
         if save {
             if let Some((path, draft)) = self.project_edit.take() {
                 self.projects.set(&path, draft);
@@ -1232,7 +1275,8 @@ fn project_header(projects: &ProjectNames, path: &str, count: usize) -> egui::Ri
         .get(path)
         .map(str::to_string)
         .unwrap_or_else(|| display_path(path));
-    egui::RichText::new(format!("{label} ({count})")).color(c_teal())
+    let color = projects.color(path).unwrap_or_else(c_teal);
+    egui::RichText::new(format!("{label} ({count})")).color(color).strong()
 }
 
 /// Live-session tally split by reported state, for the section headers.
@@ -1466,6 +1510,10 @@ fn parse_hex(hex: &String) -> Option<egui::Color32> {
     let g = u8::from_str_radix(&h[2..4], 16).ok()?;
     let b = u8::from_str_radix(&h[4..6], 16).ok()?;
     Some(egui::Color32::from_rgb(r, g, b))
+}
+
+fn hex_of(c: egui::Color32) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b())
 }
 
 fn now_secs() -> u64 {
