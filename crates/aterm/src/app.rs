@@ -5,7 +5,7 @@
 use eframe::egui;
 
 use crate::sessions::{PanelAction, SessionPanel};
-use crate::term::input::key_to_bytes;
+use crate::term::input::{key_to_bytes, mouse_report};
 use crate::term::render::{self, pixel_to_point, CellMetrics};
 use crate::term::{TermInstance, TermSize};
 
@@ -327,14 +327,28 @@ impl eframe::App for AtermApp {
 }
 
 impl AtermApp {
-    /// Drag → selection; release copies it; plain click clears it; wheel scrolls
-    /// the scrollback.
+    /// When the child requests mouse reporting, forward clicks/drag/wheel to it.
+    /// Otherwise: drag → local selection (copied on release), click clears it,
+    /// wheel scrolls the scrollback (or sends arrows on the alternate screen).
     fn handle_mouse(&mut self, ui: &egui::Ui, response: &egui::Response, metrics: CellMetrics) {
         let origin = response.rect.min;
+        let modes = self.tabs[self.active].term.modes();
         let (cols, lines, offset) = {
             let term = &self.tabs[self.active].term;
             (term.size.columns, term.size.lines, term.display_offset())
         };
+        let cell_at = |pos: egui::Pos2| -> (usize, usize) {
+            let local = pos - origin;
+            let col = ((local.x / metrics.width).floor().max(0.0) as usize).min(cols.saturating_sub(1));
+            let line =
+                ((local.y / metrics.height).floor().max(0.0) as usize).min(lines.saturating_sub(1));
+            (col, line)
+        };
+
+        if modes.mouse_report {
+            self.report_mouse(ui, response, modes, &cell_at);
+            return;
+        }
 
         let mut copy_text: Option<String> = None;
         {
@@ -363,12 +377,89 @@ impl AtermApp {
             self.copy(text);
         }
 
-        // Scrollback via the mouse wheel while hovering the grid.
+        // Wheel: scrollback normally; on the alternate screen send arrow keys
+        // (alternate-scroll) so pagers/TUIs move instead of scrolling our buffer.
         if response.hovered() {
             let scroll_y = ui.input(|i| i.raw_scroll_delta.y);
             if scroll_y != 0.0 {
-                let delta = (scroll_y / metrics.height).round() as i32;
-                self.tabs[self.active].term.scroll(delta);
+                let lines = (scroll_y / metrics.height).round() as i32;
+                if modes.alt_screen {
+                    let seq: &[u8] = if lines > 0 { b"\x1bOA" } else { b"\x1bOB" };
+                    for _ in 0..lines.unsigned_abs() {
+                        self.tabs[self.active].term.write(seq);
+                    }
+                } else {
+                    self.tabs[self.active].term.scroll(lines);
+                }
+            }
+        }
+    }
+
+    /// Forward pointer buttons and wheel to the child as mouse-reporting bytes.
+    fn report_mouse(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        modes: crate::term::Modes,
+        cell_at: &dyn Fn(egui::Pos2) -> (usize, usize),
+    ) {
+        let term = &self.tabs[self.active].term;
+        let events = ui.input(|i| i.events.clone());
+        for event in events {
+            if let egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers,
+            } = event
+            {
+                if !response.rect.contains(pos) {
+                    continue;
+                }
+                let b = match button {
+                    egui::PointerButton::Primary => 0,
+                    egui::PointerButton::Middle => 1,
+                    egui::PointerButton::Secondary => 2,
+                    _ => continue,
+                };
+                let (col, line) = cell_at(pos);
+                if let Some(bytes) =
+                    mouse_report(modes.sgr_mouse, b, col, line, pressed, modifiers, false)
+                {
+                    term.write(&bytes);
+                }
+            }
+        }
+        // Drag motion (only if the child asked for it).
+        if (modes.mouse_drag || modes.mouse_motion) && response.dragged() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                if response.rect.contains(pos) {
+                    let (col, line) = cell_at(pos);
+                    let mods = ui.input(|i| i.modifiers);
+                    if let Some(bytes) = mouse_report(modes.sgr_mouse, 0, col, line, true, mods, true) {
+                        term.write(&bytes);
+                    }
+                }
+            }
+        }
+        // Wheel → buttons 64 (up) / 65 (down).
+        if response.hovered() {
+            let scroll_y = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll_y != 0.0 {
+                let pos = ui
+                    .input(|i| i.pointer.hover_pos())
+                    .unwrap_or_else(|| response.rect.center());
+                if response.rect.contains(pos) {
+                    let (col, line) = cell_at(pos);
+                    let btn = if scroll_y > 0.0 { 64 } else { 65 };
+                    let mods = ui.input(|i| i.modifiers);
+                    let steps = (scroll_y.abs() / 40.0).max(1.0) as usize;
+                    for _ in 0..steps.min(5) {
+                        if let Some(bytes) = mouse_report(modes.sgr_mouse, btn, col, line, true, mods, false) {
+                            term.write(&bytes);
+                        }
+                    }
+                }
             }
         }
     }
@@ -376,7 +467,8 @@ impl AtermApp {
     /// Route this frame's key/text events to the focused terminal, intercepting
     /// font-zoom and copy/paste chords first.
     fn handle_keyboard(&mut self, ui: &egui::Ui) {
-        let app_cursor = self.tabs[self.active].term.app_cursor();
+        let modes = self.tabs[self.active].term.modes();
+        let app_cursor = modes.app_cursor;
         let events = ui.input(|i| i.events.clone());
 
         for event in events {
@@ -413,7 +505,7 @@ impl AtermApp {
                             }
                             egui::Key::V if modifiers.shift => {
                                 if let Some(t) = self.paste_text() {
-                                    self.tabs[self.active].term.write(t.as_bytes());
+                                    self.paste_into_active(&t, modes.bracketed_paste);
                                 }
                                 continue;
                             }
@@ -432,6 +524,19 @@ impl AtermApp {
     fn zoom(&mut self, delta: f32) {
         let tab = &mut self.tabs[self.active];
         tab.font_size = (tab.font_size + delta).clamp(MIN_FONT, MAX_FONT);
+    }
+
+    /// Write pasted text, wrapping it in bracketed-paste markers when the child
+    /// has enabled that mode (so editors/REPLs don't auto-indent or auto-run it).
+    fn paste_into_active(&self, text: &str, bracketed: bool) {
+        let term = &self.tabs[self.active].term;
+        if bracketed {
+            term.write(b"\x1b[200~");
+            term.write(text.as_bytes());
+            term.write(b"\x1b[201~");
+        } else {
+            term.write(text.as_bytes());
+        }
     }
 }
 

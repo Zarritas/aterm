@@ -64,6 +64,19 @@ impl Dimensions for TermSize {
     }
 }
 
+/// VT mode flags the input/render layer reads each frame.
+#[derive(Clone, Copy)]
+pub struct Modes {
+    pub app_cursor: bool,
+    /// Any mouse-reporting mode is on (forward clicks/wheel to the child).
+    pub mouse_report: bool,
+    pub mouse_drag: bool,
+    pub mouse_motion: bool,
+    pub sgr_mouse: bool,
+    pub bracketed_paste: bool,
+    pub alt_screen: bool,
+}
+
 /// A live terminal: the shared VT model plus the channel to write input.
 ///
 /// `term` is an `Arc<FairMutex<Term<_>>>`: the EventLoop thread mutates it on
@@ -145,10 +158,20 @@ impl TermInstance {
         self.notifier.on_resize(size.window_size());
     }
 
-    /// True when the child's escape modes request application cursor keys
-    /// (arrows must encode as `ESC O A` rather than `ESC [ A`).
-    pub fn app_cursor(&self) -> bool {
-        self.term.lock().mode().contains(TermMode::APP_CURSOR)
+    /// Snapshot of the VT modes the input layer needs this frame (one lock).
+    pub fn modes(&self) -> Modes {
+        let term = self.term.lock();
+        let m = *term.mode();
+        Modes {
+            app_cursor: m.contains(TermMode::APP_CURSOR),
+            mouse_report: m
+                .intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION),
+            mouse_drag: m.contains(TermMode::MOUSE_DRAG),
+            mouse_motion: m.contains(TermMode::MOUSE_MOTION),
+            sgr_mouse: m.contains(TermMode::SGR_MOUSE),
+            bracketed_paste: m.contains(TermMode::BRACKETED_PASTE),
+            alt_screen: m.contains(TermMode::ALT_SCREEN),
+        }
     }
 
     /// Scroll the viewport by `lines` (positive = towards history / older).
