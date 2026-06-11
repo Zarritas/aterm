@@ -139,6 +139,12 @@ pub struct SessionPanel {
     /// When the last scan finished, to drive periodic auto-refresh.
     last_scan_at: Option<std::time::Instant>,
     filter: String,
+    /// Active full-text query (Some once a content search has run for `filter`).
+    fts_query: Option<String>,
+    /// `(provider, id)` of sessions whose transcript matched `fts_query`.
+    fts_matches: std::collections::HashSet<(String, String)>,
+    /// In-flight content search.
+    fts_rx: Option<Receiver<(String, std::collections::HashSet<(String, String)>)>>,
     group_mode: GroupMode,
     /// Active "folder": when set, only sessions carrying this tag are shown.
     tag_filter: Option<String>,
@@ -180,6 +186,9 @@ impl Default for SessionPanel {
             scan_rx: None,
             last_scan_at: None,
             filter: String::new(),
+            fts_query: None,
+            fts_matches: std::collections::HashSet::new(),
+            fts_rx: None,
             group_mode: GroupMode::Provider,
             tag_filter: None,
             only_active: false,
@@ -254,6 +263,64 @@ impl SessionPanel {
         self.scanned = false;
     }
 
+    /// Launch a full-text search of session transcripts for the current filter,
+    /// off-thread (reading each `.jsonl` is slow). Repaints when done.
+    fn start_fts(&mut self, ctx: &egui::Context) {
+        let query = self.filter.trim().to_lowercase();
+        if query.is_empty() {
+            self.clear_fts();
+            return;
+        }
+        let ids: Vec<(String, String)> = self
+            .groups
+            .iter()
+            .flat_map(|g| {
+                let pid = g.provider.id().to_string();
+                g.sessions.iter().map(move |s| (pid.clone(), s.id.clone()))
+            })
+            .collect();
+        let (tx, rx) = mpsc::channel();
+        self.fts_rx = Some(rx);
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let providers = all_providers();
+            let mut matches = std::collections::HashSet::new();
+            for (pid, sid) in ids {
+                if let Some(p) = providers.iter().find(|p| p.id() == pid) {
+                    if let Some(content) = p.fts_content(&sid) {
+                        if content.to_lowercase().contains(&query) {
+                            matches.insert((pid, sid));
+                        }
+                    }
+                }
+            }
+            let _ = tx.send((query, matches));
+            ctx.request_repaint();
+        });
+    }
+
+    fn clear_fts(&mut self) {
+        self.fts_query = None;
+        self.fts_matches.clear();
+        self.fts_rx = None;
+    }
+
+    fn poll_fts(&mut self) {
+        if let Some(rx) = &self.fts_rx {
+            if let Ok((query, matches)) = rx.try_recv() {
+                self.fts_query = Some(query);
+                self.fts_matches = matches;
+                self.fts_rx = None;
+            }
+        }
+        // A changed filter invalidates a prior content search.
+        if let Some(q) = &self.fts_query {
+            if *q != self.filter.trim().to_lowercase() {
+                self.clear_fts();
+            }
+        }
+    }
+
     fn save_metadata(&mut self) {
         if let Err(e) = self.metadata.save(&self.metadata_path) {
             self.status = Some(format!("No se pudo guardar metadata: {e}"));
@@ -269,6 +336,7 @@ impl SessionPanel {
             self.start_scan(ui.ctx());
         }
         self.poll_scan();
+        self.poll_fts();
         self.maybe_auto_refresh(ui.ctx());
         // Wake periodically so the auto-refresh fires even when idle.
         ui.ctx().request_repaint_after(Self::refresh_every());
@@ -299,6 +367,27 @@ impl SessionPanel {
                     .hint_text("filtrar…")
                     .desired_width(f32::INFINITY),
             );
+        });
+        ui.horizontal(|ui| {
+            let searching = self.fts_rx.is_some();
+            if ui
+                .add_enabled(!searching, egui::Button::new("⌕ en contenido"))
+                .on_hover_text("Buscar el texto también dentro de las conversaciones")
+                .clicked()
+            {
+                self.start_fts(ui.ctx());
+            }
+            if searching {
+                ui.spinner();
+            } else if self.fts_query.is_some() {
+                ui.colored_label(
+                    c_teal(),
+                    format!("{} coincidencias en contenido", self.fts_matches.len()),
+                );
+                if ui.small_button("✕").on_hover_text("Quitar búsqueda de contenido").clicked() {
+                    self.clear_fts();
+                }
+            }
         });
 
         ui.horizontal_wrapped(|ui| {
@@ -447,12 +536,20 @@ impl SessionPanel {
         // below; written back after the closure.
         let mut new_session_path = std::mem::take(&mut self.new_session_path);
 
-        // Pre-filter every session to (group_index, session_index) pairs.
+        // When a content search is active, text matching uses its result set
+        // (transcript hits) instead of the title/metadata filter.
+        let fts_on = self.fts_query.is_some();
+        let fts = &self.fts_matches;
         let passes = |gi: usize, si: usize| -> bool {
             let g = &self.groups[gi];
             let s = &g.sessions[si];
+            let text_ok = if fts_on {
+                fts.contains(&(g.provider.id().to_string(), s.id.clone()))
+            } else {
+                matches_filter(s, &self.metadata, g.provider.id(), &filter)
+            };
             (!only_active || s.is_active)
-                && matches_filter(s, &self.metadata, g.provider.id(), &filter)
+                && text_ok
                 && tag_passes(&self.metadata, g.provider.id(), &s.id, tag_filter.as_deref())
         };
         let projects = &self.projects;
