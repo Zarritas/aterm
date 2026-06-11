@@ -138,6 +138,11 @@ pub struct AtermApp {
     closed_stack: Vec<(Vec<String>, Option<std::path::PathBuf>, Option<String>)>,
     /// Showing the "quit with running processes?" confirmation.
     quit_confirm: bool,
+    /// Tab id whose right-click context menu is currently open (so it survives
+    /// a Shift release while still showing inside a mouse-reporting TUI).
+    ctx_menu_open: Option<u64>,
+    /// URL under the cursor when the context menu was opened (link actions).
+    menu_link: Option<String>,
     /// Relative column / row sizes of the split grid (draggable dividers).
     /// Reset to uniform when the pane count changes the grid dimensions.
     col_fracs: Vec<f32>,
@@ -171,6 +176,8 @@ impl Default for AtermApp {
             close_confirm: None,
             closed_stack: Vec::new(),
             quit_confirm: false,
+            ctx_menu_open: None,
+            menu_link: None,
             col_fracs: Vec::new(),
             row_fracs: Vec::new(),
             restore_pending: crate::persist::load(),
@@ -1287,9 +1294,89 @@ impl AtermApp {
         }
 
         self.handle_mouse(ui, &response, metrics, i);
+
+        // Right-click context menu (Copiar / Pegar / …). Allowed when local
+        // selection is available (no mouse-reporting, or Shift held) — or while
+        // it's already open, so releasing Shift to pick an item inside a TUI
+        // doesn't dismiss it.
+        let mouse_report = self.tabs[i].term.modes().mouse_report;
+        let shift = ui.input(|inp| inp.modifiers.shift);
+        if !mouse_report || shift || self.ctx_menu_open == Some(id) {
+            if response.secondary_clicked() {
+                let link = response.interact_pointer_pos().and_then(|pos| {
+                    let local = pos - rect.min;
+                    let col = (local.x / metrics.width).floor().max(0.0) as usize;
+                    let vline = (local.y / metrics.height).floor().max(0.0) as usize;
+                    self.tabs[i].term.url_at(col, vline)
+                });
+                self.menu_link = link;
+            }
+            let menu = response.context_menu(|ui| self.term_context_menu(ui, i));
+            if menu.is_some() {
+                self.ctx_menu_open = Some(id);
+            } else if self.ctx_menu_open == Some(id) {
+                self.ctx_menu_open = None;
+            }
+        }
+
         let alive = self.tabs[i].term.exit_code().is_none();
         if response.has_focus() && alive {
             self.handle_keyboard(ui, i);
+        }
+    }
+
+    /// Contents of a terminal pane's right-click menu.
+    fn term_context_menu(&mut self, ui: &mut egui::Ui, idx: usize) {
+        let has_sel = self.tabs[idx]
+            .term
+            .selection_text()
+            .map_or(false, |t| !t.is_empty());
+        let bracketed = self.tabs[idx].term.modes().bracketed_paste;
+
+        if ui
+            .add_enabled(has_sel, egui::Button::new("Copiar"))
+            .clicked()
+        {
+            if let Some(t) = self.tabs[idx].term.selection_text() {
+                self.copy(t);
+            }
+            ui.close_menu();
+        }
+        if ui.button("Pegar").clicked() {
+            if let Some(t) = self.paste_text() {
+                self.paste_into(idx, &t, bracketed);
+            }
+            ui.close_menu();
+        }
+        if ui.button("Seleccionar todo").clicked() {
+            self.tabs[idx].term.select_all();
+            ui.close_menu();
+        }
+        if ui
+            .add_enabled(has_sel, egui::Button::new("Limpiar selección"))
+            .clicked()
+        {
+            self.tabs[idx].term.clear_selection();
+            ui.close_menu();
+        }
+
+        if let Some(url) = self.menu_link.clone() {
+            ui.separator();
+            if ui.button("Abrir enlace").clicked() {
+                open_url(&url);
+                ui.close_menu();
+            }
+            if ui.button("Copiar enlace").clicked() {
+                self.copy(url);
+                ui.close_menu();
+            }
+        }
+
+        ui.separator();
+        if ui.button("Buscar…  (Ctrl+Shift+F)").clicked() {
+            self.search_open = true;
+            self.search_last = None;
+            ui.close_menu();
         }
     }
 

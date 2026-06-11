@@ -298,6 +298,26 @@ impl TermInstance {
         term.selection = Some(Selection::new(SelectionType::Lines, point, Side::Left));
     }
 
+    /// Select the entire buffer (scrollback + screen), top-left to bottom-right.
+    pub fn select_all(&self) {
+        let mut term = self.term.lock();
+        let (top, bottom, last_col) = {
+            let grid = term.grid();
+            (
+                grid.topmost_line(),
+                grid.bottommost_line(),
+                grid.columns().saturating_sub(1),
+            )
+        };
+        let mut sel = Selection::new(
+            SelectionType::Simple,
+            Point::new(top, Column(0)),
+            Side::Left,
+        );
+        sel.update(Point::new(bottom, Column(last_col)), Side::Right);
+        term.selection = Some(sel);
+    }
+
     /// Extend the in-progress selection to `point`.
     pub fn update_selection(&self, point: Point, side: Side) {
         let mut term = self.term.lock();
