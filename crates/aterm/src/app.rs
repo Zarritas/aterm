@@ -981,7 +981,12 @@ impl AtermApp {
         {
             let tab = &mut self.tabs[idx];
             if response.drag_started() {
-                if let Some(pos) = response.interact_pointer_pos() {
+                // Anchor at the press origin, not the post-threshold position,
+                // so the selection starts exactly where the click began.
+                let anchor = ui
+                    .input(|i| i.pointer.press_origin())
+                    .or_else(|| response.interact_pointer_pos());
+                if let Some(pos) = anchor {
                     let (point, side) =
                         pixel_to_point(pos - origin, metrics, offset, cols, lines);
                     tab.term.start_selection(point, side);
