@@ -253,8 +253,32 @@ pub const MONOKAI: Palette = Palette {
     selection: rgb(0x49, 0x48, 0x3e),
 };
 
+pub const LATTE: Palette = Palette {
+    base: rgb(0xef, 0xf1, 0xf5),
+    mantle: rgb(0xe6, 0xe9, 0xef),
+    crust: rgb(0xdc, 0xe0, 0xe8),
+    surface0: rgb(0xcc, 0xd0, 0xda),
+    surface1: rgb(0xbc, 0xc0, 0xcc),
+    surface2: rgb(0xac, 0xb0, 0xbe),
+    overlay: rgb(0x9c, 0xa0, 0xb0),
+    text: rgb(0x4c, 0x4f, 0x69),
+    blue: rgb(0x1e, 0x66, 0xf5),
+    lavender: rgb(0x72, 0x87, 0xfd),
+    green: rgb(0x40, 0xa0, 0x2b),
+    yellow: rgb(0xdf, 0x8e, 0x1d),
+    peach: rgb(0xfe, 0x64, 0x0b),
+    red: rgb(0xd2, 0x0f, 0x39),
+    teal: rgb(0x17, 0x92, 0x99),
+    mauve: rgb(0x88, 0x39, 0xef),
+    sapphire: rgb(0x20, 0x9f, 0xb5),
+    card: rgb(0xe4, 0xe7, 0xed),
+    term_bg: rgb(0xef, 0xf1, 0xf5),
+    term_fg: rgb(0x4c, 0x4f, 0x69),
+    selection: rgb(0xbc, 0xc0, 0xcc),
+};
+
 /// Selectable themes, by display name.
-pub const THEMES: [(&str, Palette); 9] = [
+pub const THEMES: [(&str, Palette); 10] = [
     ("Catppuccin Mocha", MOCHA),
     ("Tokyo Night", TOKYO_NIGHT),
     ("Dracula", DRACULA),
@@ -264,6 +288,7 @@ pub const THEMES: [(&str, Palette); 9] = [
     ("One Dark", ONE_DARK),
     ("Rosé Pine", ROSE_PINE),
     ("Monokai", MONOKAI),
+    ("Catppuccin Latte (claro)", LATTE),
 ];
 
 static CURRENT: RwLock<Palette> = RwLock::new(MOCHA);
@@ -324,7 +349,15 @@ fn theme_path() -> std::path::PathBuf {
 pub fn apply(ctx: &egui::Context) {
     use egui::{Rounding, Stroke};
     let p = pal();
-    let mut v = egui::Visuals::dark();
+    // Pick egui's light/dark base from the palette's background luminance, so a
+    // light theme gets light-appropriate defaults (shadows, auto contrasts).
+    let lum =
+        0.299 * p.base.r() as f32 + 0.587 * p.base.g() as f32 + 0.114 * p.base.b() as f32;
+    let mut v = if lum > 128.0 {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
     let rounding = Rounding::same(6.0);
     v.panel_fill = p.base;
     v.window_fill = p.mantle;
