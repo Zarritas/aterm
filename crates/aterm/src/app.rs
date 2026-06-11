@@ -84,6 +84,8 @@ struct Tab {
     /// User-set tab name (overrides the child's title) and accent colour.
     name: Option<String>,
     color: Option<egui::Color32>,
+    /// When true, this terminal is shown in its own OS window, not the grid.
+    detached: bool,
 }
 
 /// In-flight tab rename/recolour dialog.
@@ -195,6 +197,7 @@ impl AtermApp {
                     key,
                     name: None,
                     color: None,
+                    detached: false,
                 });
                 // A fresh terminal takes over the view as a single pane.
                 self.visible = vec![id];
@@ -246,6 +249,28 @@ impl AtermApp {
 
     fn tab_index(&self, id: u64) -> Option<usize> {
         self.tabs.iter().position(|t| t.id == id)
+    }
+
+    /// Toggle a tab between the in-window grid and its own OS window.
+    fn toggle_detach(&mut self, id: u64) {
+        let Some(i) = self.tab_index(id) else { return };
+        let now = !self.tabs[i].detached;
+        self.tabs[i].detached = now;
+        if now {
+            // Leaving the grid: drop from the visible set.
+            self.visible.retain(|v| *v != id);
+            if self.visible.is_empty() {
+                if let Some(t) = self.tabs.iter().find(|t| !t.detached) {
+                    self.visible = vec![t.id];
+                    self.focused = t.id;
+                }
+            } else if self.focused == id {
+                self.focused = self.visible[0];
+            }
+        } else {
+            // Re-attaching: show it again and focus it.
+            self.focus_tab(id);
+        }
     }
 
     /// Move tab `src` to sit before tab `before` (or to the end when `None`).
@@ -317,6 +342,7 @@ impl eframe::App for AtermApp {
                 let mut to_focus = None;
                 let mut to_split = None;
                 let mut to_edit_tab = None;
+                let mut to_detach = None;
                 // Each tab label's horizontal extent, to resolve a drop by x.
                 let mut rects: Vec<(u64, egui::Rect)> = Vec::new();
                 for tab in &self.tabs {
@@ -366,10 +392,25 @@ impl eframe::App for AtermApp {
                     if split_resp.clicked() {
                         to_split = Some(id);
                     }
+                    let detached = self.tabs.iter().any(|t| t.id == id && t.detached);
+                    if ui
+                        .selectable_label(detached, "⇱")
+                        .on_hover_text(if detached {
+                            "Traer de vuelta a la ventana"
+                        } else {
+                            "Abrir en ventana nueva"
+                        })
+                        .clicked()
+                    {
+                        to_detach = Some(id);
+                    }
                     if ui.small_button("×").on_hover_text("Cerrar").clicked() {
                         to_close = Some(id);
                     }
                     ui.separator();
+                }
+                if let Some(id) = to_detach {
+                    self.toggle_detach(id);
                 }
                 if let Some(id) = to_edit_tab {
                     if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
@@ -443,14 +484,14 @@ impl eframe::App for AtermApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Drop any visible ids whose tab is gone; fall back to a single tab.
-            let live: std::collections::HashSet<u64> =
-                self.tabs.iter().map(|t| t.id).collect();
-            self.visible.retain(|id| live.contains(id));
+            // Only in-grid (non-detached, existing) tabs are visible here.
+            let grid_ok: std::collections::HashSet<u64> =
+                self.tabs.iter().filter(|t| !t.detached).map(|t| t.id).collect();
+            self.visible.retain(|id| grid_ok.contains(id));
             if self.visible.is_empty() {
-                if let Some(last) = self.tabs.last() {
-                    self.visible = vec![last.id];
-                    self.focused = last.id;
+                if let Some(t) = self.tabs.iter().find(|t| !t.detached) {
+                    self.visible = vec![t.id];
+                    self.focused = t.id;
                 }
             }
             if self.visible.is_empty() {
@@ -482,10 +523,48 @@ impl eframe::App for AtermApp {
 
         self.tab_edit_window(ctx);
         self.settings_window(ctx);
+        self.render_detached(ctx);
     }
 }
 
 impl AtermApp {
+    /// Render each detached terminal in its own OS window (immediate viewport,
+    /// so it can borrow the live `TermInstance`). Closing the window re-attaches.
+    fn render_detached(&mut self, ctx: &egui::Context) {
+        let detached: Vec<u64> = self
+            .tabs
+            .iter()
+            .filter(|t| t.detached)
+            .map(|t| t.id)
+            .collect();
+        for id in detached {
+            let title = self
+                .tabs
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| t.name.clone().unwrap_or_else(|| t.term.title()))
+                .unwrap_or_default();
+            let mut close = false;
+            ctx.show_viewport_immediate(
+                egui::ViewportId::from_hash_of(("detached-term", id)),
+                egui::ViewportBuilder::default()
+                    .with_title(format!("aterm — {title}"))
+                    .with_inner_size([820.0, 520.0]),
+                |vctx, _class| {
+                    if vctx.input(|i| i.viewport().close_requested()) {
+                        close = true;
+                    }
+                    egui::CentralPanel::default().show(vctx, |ui| {
+                        self.render_pane(ui, id);
+                    });
+                },
+            );
+            if close {
+                self.toggle_detach(id); // re-attach into the grid
+            }
+        }
+    }
+
     /// Settings popup, opened from the header cog.
     fn settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
