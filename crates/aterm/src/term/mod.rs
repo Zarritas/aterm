@@ -64,20 +64,22 @@ impl Dimensions for TermSize {
     }
 }
 
-/// Find a URL covering char index `col` in `line`: `http(s)://…` anywhere, or a
-/// bare `www.…` at a word boundary (returned with an `https://` scheme). Stops
-/// at whitespace and trims trailing punctuation that's usually not part of it.
-fn url_in_line(line: &[char], col: usize) -> Option<String> {
+/// Find a URL covering char index `col` in `line` and return `(url, start, end)`
+/// where `start..end` are char indices. Recognised: `http(s)://`, `file://`,
+/// `mailto:` anywhere, and a bare `www.…` at a word boundary (returned with an
+/// `https://` scheme). Stops at whitespace and trims trailing punctuation.
+fn url_in_line(line: &[char], col: usize) -> Option<(String, usize, usize)> {
     let starts = |i: usize, p: &str| -> bool {
         let pc: Vec<char> = p.chars().collect();
         i + pc.len() <= line.len() && line[i..i + pc.len()] == pc[..]
     };
+    const SCHEMES: [&str; 4] = ["https://", "http://", "file://", "mailto:"];
     let n = line.len();
     let mut i = 0;
     while i < n {
-        let scheme = starts(i, "https://") || starts(i, "http://");
+        let scheme = SCHEMES.iter().any(|s| starts(i, s));
         // `www.` only at a word boundary, so "xwww." doesn't match.
-        let bare_www = starts(i, "www.") && (i == 0 || line[i - 1].is_whitespace());
+        let bare_www = !scheme && starts(i, "www.") && (i == 0 || line[i - 1].is_whitespace());
         if scheme || bare_www {
             let mut j = i;
             while j < n
@@ -92,11 +94,12 @@ fn url_in_line(line: &[char], col: usize) -> Option<String> {
             }
             if col >= i && col < end {
                 let text: String = line[i..end].iter().collect();
-                return Some(if bare_www {
+                let url = if bare_www {
                     format!("https://{text}")
                 } else {
                     text
-                });
+                };
+                return Some((url, i, end));
             }
             i = j;
         } else {
@@ -320,7 +323,42 @@ impl TermInstance {
             return Some(h.uri().to_string());
         }
         let line: Vec<char> = (0..cols).map(|c| row[Column(c)].c).collect();
-        url_in_line(&line, col)
+        url_in_line(&line, col).map(|(url, _, _)| url)
+    }
+
+    /// Column span `(start, end)` of the URL/hyperlink under viewport cell
+    /// `(col, vline)`, for hover underlining. Same line as `vline`.
+    pub fn url_span_at(&self, col: usize, vline: usize) -> Option<(usize, usize)> {
+        use alacritty_terminal::term::viewport_to_point;
+        let term = self.term.lock();
+        let grid = term.grid();
+        let point = viewport_to_point(grid.display_offset(), Point::new(vline, Column(col)));
+        if point.line.0 < grid.topmost_line().0 || point.line.0 > grid.bottommost_line().0 {
+            return None;
+        }
+        let cols = grid.columns();
+        if col >= cols {
+            return None;
+        }
+        let row = &grid[point.line];
+        // OSC-8: expand over the contiguous run carrying the same hyperlink.
+        if let Some(h) = row[Column(col)].hyperlink() {
+            let uri = h.uri().to_string();
+            let same = |c: usize| {
+                row[Column(c)].hyperlink().map(|x| x.uri().to_string()).as_deref() == Some(&uri)
+            };
+            let mut start = col;
+            while start > 0 && same(start - 1) {
+                start -= 1;
+            }
+            let mut end = col + 1;
+            while end < cols && same(end) {
+                end += 1;
+            }
+            return Some((start, end));
+        }
+        let line: Vec<char> = (0..cols).map(|c| row[Column(c)].c).collect();
+        url_in_line(&line, col).map(|(_, s, e)| (s, e))
     }
 
     /// Search the grid + scrollback upward for `query` (case-insensitive),
@@ -582,30 +620,39 @@ mod url_tests {
         s.chars().collect()
     }
 
+    fn url(line: &[char], col: usize) -> Option<String> {
+        url_in_line(line, col).map(|(u, _, _)| u)
+    }
+
     #[test]
     fn finds_url_under_column_and_trims_punctuation() {
         let l = chars("ver https://example.com/x), gracias");
-        // col 10 falls inside the URL
-        assert_eq!(url_in_line(&l, 10).as_deref(), Some("https://example.com/x"));
-        // trailing ) is trimmed
-        assert!(!url_in_line(&l, 10).unwrap().ends_with(')'));
-        // a column outside any URL → None
-        assert_eq!(url_in_line(&l, 0), None);
+        assert_eq!(url(&l, 10).as_deref(), Some("https://example.com/x"));
+        assert!(!url(&l, 10).unwrap().ends_with(')'));
+        assert_eq!(url(&l, 0), None);
     }
 
     #[test]
     fn no_url() {
-        assert_eq!(url_in_line(&chars("solo texto plano"), 3), None);
+        assert_eq!(url(&chars("solo texto plano"), 3), None);
     }
 
     #[test]
     fn bare_www_gets_https_scheme() {
         let l = chars("mira www.ejemplo.com ya");
+        assert_eq!(url(&l, 7).as_deref(), Some("https://www.ejemplo.com"));
+        assert_eq!(url(&chars("xwww.no.com"), 2), None);
+    }
+
+    #[test]
+    fn mailto_and_file_schemes() {
         assert_eq!(
-            url_in_line(&l, 7).as_deref(),
-            Some("https://www.ejemplo.com")
+            url(&chars("escribe a mailto:a@b.com hoy"), 12).as_deref(),
+            Some("mailto:a@b.com")
         );
-        // Not at a word boundary → no match.
-        assert_eq!(url_in_line(&chars("xwww.no.com"), 2), None);
+        assert_eq!(
+            url(&chars("abre file:///etc/hosts ahora"), 8).as_deref(),
+            Some("file:///etc/hosts")
+        );
     }
 }

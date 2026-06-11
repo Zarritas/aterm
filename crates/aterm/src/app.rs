@@ -990,7 +990,25 @@ impl AtermApp {
             }
         }
 
-        let response = render::draw(ui, &self.tabs[i].term, metrics, focused);
+        // Link under the pointer → underline it, and show a hand when Ctrl is
+        // held (Ctrl+click opens it).
+        let rect = ui.available_rect_before_wrap();
+        let mut link_span: Option<(usize, usize, usize)> = None;
+        if let Some(p) = ui.input(|inp| inp.pointer.hover_pos()) {
+            if rect.contains(p) {
+                let local = p - rect.min;
+                let col = (local.x / metrics.width).floor().max(0.0) as usize;
+                let vline = (local.y / metrics.height).floor().max(0.0) as usize;
+                if let Some((s, e)) = self.tabs[i].term.url_span_at(col, vline) {
+                    link_span = Some((vline, s, e));
+                    if ui.input(|inp| inp.modifiers.ctrl) {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                }
+            }
+        }
+
+        let response = render::draw(ui, &self.tabs[i].term, metrics, focused, link_span);
 
         if focused && self.focus_pending {
             response.request_focus();

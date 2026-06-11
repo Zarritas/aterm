@@ -81,6 +81,8 @@ pub fn draw(
     term: &TermInstance,
     metrics: CellMetrics,
     focused: bool,
+    // Optional `(screen_line, start_col, end_col)` to underline (hovered link).
+    link_span: Option<(usize, usize, usize)>,
 ) -> egui::Response {
     let avail = ui.available_size();
     let (rect, response) = ui.allocate_exact_size(avail, egui::Sense::click_and_drag());
@@ -165,6 +167,14 @@ pub fn draw(
         if cell.flags.contains(Flags::STRIKEOUT) {
             let y = cell_rect.center().y;
             painter.hline(cell_rect.x_range(), y, Stroke::new(1.0, color32(fg)));
+        }
+
+        // Hovered-link underline.
+        if let Some((ll, ls, le)) = link_span {
+            if line as usize == ll && col >= ls && col < le {
+                let link = color32(to_rgb(theme.blue));
+                painter.hline(cell_rect.x_range(), cell_rect.bottom() - 1.0, Stroke::new(1.5, link));
+            }
         }
     }
 
