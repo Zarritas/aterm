@@ -215,6 +215,18 @@ impl TermInstance {
         term.selection = Some(Selection::new(SelectionType::Simple, point, side));
     }
 
+    /// Select the word at `point` (double-click).
+    pub fn select_word(&self, point: Point) {
+        let mut term = self.term.lock();
+        term.selection = Some(Selection::new(SelectionType::Semantic, point, Side::Left));
+    }
+
+    /// Select the whole line at `point` (triple-click).
+    pub fn select_line(&self, point: Point) {
+        let mut term = self.term.lock();
+        term.selection = Some(Selection::new(SelectionType::Lines, point, Side::Left));
+    }
+
     /// Extend the in-progress selection to `point`.
     pub fn update_selection(&self, point: Point, side: Side) {
         let mut term = self.term.lock();

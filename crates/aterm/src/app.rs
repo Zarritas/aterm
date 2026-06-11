@@ -981,7 +981,19 @@ impl AtermApp {
         let mut copy_text: Option<String> = None;
         {
             let tab = &mut self.tabs[idx];
-            if response.drag_started() {
+            if response.triple_clicked() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let (point, _) = pixel_to_point(pos - origin, metrics, offset, cols, lines);
+                    tab.term.select_line(point);
+                    copy_text = tab.term.selection_text();
+                }
+            } else if response.double_clicked() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let (point, _) = pixel_to_point(pos - origin, metrics, offset, cols, lines);
+                    tab.term.select_word(point);
+                    copy_text = tab.term.selection_text();
+                }
+            } else if response.drag_started() {
                 // Anchor at the press origin, not the post-threshold position,
                 // so the selection starts exactly where the click began.
                 let anchor = ui
