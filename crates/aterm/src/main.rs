@@ -9,6 +9,7 @@
 //! Architecture, rationale and the full roadmap live in CLAUDE.md.
 
 mod app;
+mod persist;
 mod service_status;
 mod settings;
 mod sessions;

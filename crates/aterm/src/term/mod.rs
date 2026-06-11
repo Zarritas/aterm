@@ -223,6 +223,20 @@ impl TermInstance {
         pgrp > 0 && pgrp != self.shell_pid
     }
 
+    /// Current working directory of the shell, following any `cd` the user made
+    /// (read from `/proc/<pid>/cwd`). Used to reopen a closed tab in the same
+    /// place. `None` if it can't be resolved (no procfs, process gone).
+    pub fn cwd(&self) -> Option<std::path::PathBuf> {
+        #[cfg(target_os = "linux")]
+        {
+            std::fs::read_link(format!("/proc/{}/cwd", self.shell_pid)).ok()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
     /// Send raw bytes to the child (from input.rs key mapping).
     pub fn write(&self, bytes: &[u8]) {
         if bytes.is_empty() {
@@ -359,6 +373,43 @@ impl TermInstance {
         }
         let line: Vec<char> = (0..cols).map(|c| row[Column(c)].c).collect();
         url_in_line(&line, col).map(|(_, s, e)| (s, e))
+    }
+
+    /// All occurrences of `query` (case-insensitive) within the currently
+    /// visible viewport, as `(screen_row, col_start, col_end)` spans (end
+    /// exclusive). Used to highlight every match while searching.
+    pub fn viewport_matches(&self, query: &str) -> Vec<(usize, usize, usize)> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let needle = query.to_lowercase();
+        let nlen = needle.chars().count();
+        let term = self.term.lock();
+        let grid = term.grid();
+        let offset = grid.display_offset() as i32;
+        let cols = grid.columns();
+        let top = grid.topmost_line().0;
+        let bottom = grid.bottommost_line().0;
+        let mut out = Vec::new();
+        for row in 0..self.size.lines {
+            // Inverse of render's mapping: screen_row = buffer_line + offset.
+            let buffer_line = row as i32 - offset;
+            if buffer_line < top || buffer_line > bottom {
+                continue;
+            }
+            let cells = &grid[Line(buffer_line)];
+            let text: String = (0..cols).map(|c| cells[Column(c)].c).collect();
+            let lower = text.to_lowercase();
+            let mut from = 0;
+            while let Some(rel) = lower[from..].find(&needle) {
+                let byte = from + rel;
+                let col = text[..byte].chars().count();
+                out.push((row, col, col + nlen));
+                // Advance past this match (by one char, to catch overlaps).
+                from = byte + needle.chars().next().map_or(1, |c| c.len_utf8());
+            }
+        }
+        out
     }
 
     /// Search the grid + scrollback upward for `query` (case-insensitive),

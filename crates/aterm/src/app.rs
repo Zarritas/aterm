@@ -138,6 +138,16 @@ pub struct AtermApp {
     closed_stack: Vec<(Vec<String>, Option<std::path::PathBuf>, Option<String>)>,
     /// Showing the "quit with running processes?" confirmation.
     quit_confirm: bool,
+    /// Relative column / row sizes of the split grid (draggable dividers).
+    /// Reset to uniform when the pane count changes the grid dimensions.
+    col_fracs: Vec<f32>,
+    row_fracs: Vec<f32>,
+    /// Tabs loaded from the last session, opened on the first frame (needs ctx).
+    restore_pending: Vec<crate::persist::TabSpec>,
+    /// Last session JSON written to disk, to skip redundant writes.
+    last_saved: String,
+    /// When the session was last persisted (writes are throttled).
+    last_save_at: std::time::Instant,
 }
 
 impl Default for AtermApp {
@@ -161,6 +171,11 @@ impl Default for AtermApp {
             close_confirm: None,
             closed_stack: Vec::new(),
             quit_confirm: false,
+            col_fracs: Vec::new(),
+            row_fracs: Vec::new(),
+            restore_pending: crate::persist::load(),
+            last_saved: String::new(),
+            last_save_at: std::time::Instant::now(),
         }
     }
 }
@@ -229,6 +244,74 @@ impl AtermApp {
         self.focus_pending = true;
     }
 
+    /// Move focus to the next (`delta`=1) or previous (`delta`=-1) tab in bar
+    /// order, wrapping around, and show it as the sole pane.
+    fn cycle_tab(&mut self, delta: isize) {
+        let n = self.tabs.len();
+        if n == 0 {
+            return;
+        }
+        let cur = self
+            .tabs
+            .iter()
+            .position(|t| t.id == self.focused)
+            .unwrap_or(0) as isize;
+        let next = (cur + delta).rem_euclid(n as isize) as usize;
+        let id = self.tabs[next].id;
+        self.focus_tab(id);
+    }
+
+    /// Snapshot the open tabs as restartable specs (shells carry their live
+    /// cwd so they reopen where the user left off; agent sessions keep theirs).
+    fn current_specs(&self) -> Vec<crate::persist::TabSpec> {
+        self.tabs
+            .iter()
+            .map(|t| {
+                let cwd = if t.key.is_none() {
+                    t.term.cwd().or_else(|| t.cwd.clone())
+                } else {
+                    t.cwd.clone()
+                };
+                crate::persist::TabSpec {
+                    argv: t.argv.clone(),
+                    cwd,
+                    key: t.key.clone(),
+                    name: t.name.clone(),
+                }
+            })
+            .collect()
+    }
+
+    /// Persist the current tab set, throttled and only when it changed, so the
+    /// next launch restores them. Reading each shell's live cwd is cheap but not
+    /// free, hence the ~1.5s gate.
+    fn persist_session(&mut self) {
+        if self.last_save_at.elapsed().as_millis() < 1500 {
+            return;
+        }
+        self.last_save_at = std::time::Instant::now();
+        let specs = self.current_specs();
+        let json = serde_json::to_string(&specs).unwrap_or_default();
+        if json != self.last_saved {
+            self.last_saved = json;
+            crate::persist::save(&specs);
+        }
+    }
+
+    /// Close `id`, but first pop a confirmation if a foreground command is
+    /// running (an idle shell / exited child closes immediately).
+    fn request_close(&mut self, id: u64) {
+        let busy = self
+            .tabs
+            .iter()
+            .any(|t| t.id == id && t.term.has_foreground_process());
+        if busy {
+            self.close_confirm = Some(id);
+        } else {
+            self.close_tab(id);
+        }
+    }
+
     /// Toggle whether `id` is tiled alongside the current panes (a split).
     fn toggle_split(&mut self, id: u64) {
         if let Some(pos) = self.visible.iter().position(|v| *v == id) {
@@ -249,10 +332,17 @@ impl AtermApp {
         let Some(i) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
-        // Remember how to respawn it (Ctrl+Shift+T).
+        // Remember how to respawn it (Ctrl+Shift+T). For a plain shell, prefer
+        // the live cwd (following any `cd`) so it reopens where the user left
+        // off; an agent session (`key`) keeps its original launch dir.
         let t = &self.tabs[i];
+        let cwd = if t.key.is_none() {
+            t.term.cwd().or_else(|| t.cwd.clone())
+        } else {
+            t.cwd.clone()
+        };
         self.closed_stack
-            .push((t.argv.clone(), t.cwd.clone(), t.key.clone()));
+            .push((t.argv.clone(), cwd, t.key.clone()));
         if self.closed_stack.len() > 20 {
             self.closed_stack.remove(0);
         }
@@ -324,6 +414,61 @@ impl eframe::App for AtermApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut pending_open: Option<(Vec<String>, Option<std::path::PathBuf>, Option<String>)> =
             None;
+
+        // First frame: re-open the tabs from the previous session (needs `ctx`,
+        // hence here and not in `default`). Names are reattached afterwards.
+        if !self.restore_pending.is_empty() {
+            let specs = std::mem::take(&mut self.restore_pending);
+            for spec in specs {
+                self.open_tab(ctx, spec.argv, spec.cwd, spec.key);
+                if spec.name.is_some() {
+                    if let Some(t) = self.tabs.last_mut() {
+                        t.name = spec.name;
+                    }
+                }
+            }
+        }
+
+        // Reabrir la última pestaña cerrada (Ctrl+Shift+T) a nivel global: el
+        // handler por-pane solo corre con un terminal enfocado, así que tras
+        // cerrar la última pestaña no habría a quién entregar el atajo.
+        if ctx.input_mut(|i| {
+            i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::T)
+        }) {
+            if let Some((argv, cwd, key)) = self.closed_stack.pop() {
+                self.open_tab(ctx, argv, cwd, key);
+            }
+        }
+
+        // Tab navigation (global, so it works regardless of which pane is
+        // focused): Ctrl+Tab / Ctrl+Shift+Tab cycle, Alt+1..9 jump to the Nth,
+        // Ctrl+Shift+W closes the focused one.
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Tab)) {
+            self.cycle_tab(1);
+        }
+        if ctx.input_mut(|i| {
+            i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::Tab)
+        }) {
+            self.cycle_tab(-1);
+        }
+        const NUM_KEYS: [egui::Key; 9] = [
+            egui::Key::Num1, egui::Key::Num2, egui::Key::Num3,
+            egui::Key::Num4, egui::Key::Num5, egui::Key::Num6,
+            egui::Key::Num7, egui::Key::Num8, egui::Key::Num9,
+        ];
+        for (n, key) in NUM_KEYS.into_iter().enumerate() {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, key)) {
+                if let Some(t) = self.tabs.get(n) {
+                    let id = t.id;
+                    self.focus_tab(id);
+                }
+            }
+        }
+        if ctx.input_mut(|i| {
+            i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::W)
+        }) {
+            self.request_close(self.focused);
+        }
 
         // Auto-close tabs whose child has exited (`exit` / Ctrl+D) — unless the
         // user prefers to keep the `[exited N]` placeholder.
@@ -489,17 +634,7 @@ impl eframe::App for AtermApp {
                     self.toggle_split(id);
                 }
                 if let Some(id) = to_close {
-                    // Confirm only if a foreground command is running; an idle
-                    // shell (or exited child) closes immediately.
-                    let busy = self
-                        .tabs
-                        .iter()
-                        .any(|t| t.id == id && t.term.has_foreground_process());
-                    if busy {
-                        self.close_confirm = Some(id);
-                    } else {
-                        self.close_tab(id);
-                    }
+                    self.request_close(id);
                 }
 
                 // Settings cog, pushed to the right edge of the header.
@@ -567,6 +702,8 @@ impl eframe::App for AtermApp {
         self.close_confirm_window(ctx);
         self.quit_confirm_window(ctx);
         self.render_detached(ctx);
+
+        self.persist_session();
     }
 }
 
@@ -938,7 +1075,8 @@ impl AtermApp {
         }
     }
 
-    /// Tile the visible tabs into a near-square grid of panes.
+    /// Tile the visible tabs into a near-square grid of panes, with draggable
+    /// dividers between columns and rows to resize them.
     fn render_panes(&mut self, ui: &mut egui::Ui) {
         let ids: Vec<u64> = self.visible.clone();
         let n = ids.len();
@@ -948,23 +1086,118 @@ impl AtermApp {
         }
         let cols = (n as f32).sqrt().ceil() as usize;
         let rows = n.div_ceil(cols);
+        // Reset to uniform whenever the grid dimensions change (panes added /
+        // removed); otherwise keep the user's dragged ratios.
+        if self.col_fracs.len() != cols {
+            self.col_fracs = vec![1.0 / cols as f32; cols];
+        }
+        if self.row_fracs.len() != rows {
+            self.row_fracs = vec![1.0 / rows as f32; rows];
+        }
+
         let area = ui.available_rect_before_wrap();
-        let gap = 4.0;
-        let cell_w = (area.width() - gap * (cols as f32 - 1.0)) / cols as f32;
-        let cell_h = (area.height() - gap * (rows as f32 - 1.0)) / rows as f32;
+        let gap = 6.0;
+        let total_w = area.width() - gap * (cols as f32 - 1.0);
+        let total_h = area.height() - gap * (rows as f32 - 1.0);
+
+        // Per-track pixel sizes and top-left starts.
+        let widths: Vec<f32> = self.col_fracs.iter().map(|f| f * total_w).collect();
+        let heights: Vec<f32> = self.row_fracs.iter().map(|f| f * total_h).collect();
+        let mut xs = Vec::with_capacity(cols);
+        let mut acc = area.min.x;
+        for w in &widths {
+            xs.push(acc);
+            acc += w + gap;
+        }
+        let mut ys = Vec::with_capacity(rows);
+        let mut acc = area.min.y;
+        for h in &heights {
+            ys.push(acc);
+            acc += h + gap;
+        }
+
         for (idx, id) in ids.into_iter().enumerate() {
             let r = idx / cols;
             let c = idx % cols;
-            let min = egui::pos2(
-                area.min.x + c as f32 * (cell_w + gap),
-                area.min.y + r as f32 * (cell_h + gap),
-            );
-            let rect = egui::Rect::from_min_size(min, egui::vec2(cell_w, cell_h));
+            let min = egui::pos2(xs[c], ys[r]);
+            let rect = egui::Rect::from_min_size(min, egui::vec2(widths[c], heights[r]));
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
                 ui.set_clip_rect(rect);
                 self.render_pane(ui, id);
             });
         }
+
+        self.split_dividers(ui, area, gap, &xs, &widths, &ys, &heights, total_w, total_h);
+    }
+
+    /// Draggable column/row dividers for the split grid. Dragging shifts size
+    /// between the two adjacent tracks (kept above a small minimum).
+    #[allow(clippy::too_many_arguments)]
+    fn split_dividers(
+        &mut self,
+        ui: &mut egui::Ui,
+        area: egui::Rect,
+        gap: f32,
+        xs: &[f32],
+        widths: &[f32],
+        ys: &[f32],
+        heights: &[f32],
+        total_w: f32,
+        total_h: f32,
+    ) {
+        const MIN_FRAC: f32 = 0.08;
+        let line = crate::theme::pal().surface2;
+
+        // Vertical dividers between columns.
+        for c in 0..xs.len().saturating_sub(1) {
+            let x = xs[c] + widths[c] + gap / 2.0;
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(x - gap / 2.0, area.min.y),
+                egui::pos2(x + gap / 2.0, area.max.y),
+            );
+            let resp = ui
+                .interact(rect, ui.id().with(("vsplit", c)), egui::Sense::drag())
+                .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            if resp.hovered() || resp.dragged() {
+                ui.painter().vline(x, rect.y_range(), egui::Stroke::new(2.0, line));
+            }
+            if resp.dragged() {
+                let df = resp.drag_delta().x / total_w;
+                self.shift_frac(true, c, df, MIN_FRAC);
+            }
+        }
+
+        // Horizontal dividers between rows.
+        for r in 0..ys.len().saturating_sub(1) {
+            let y = ys[r] + heights[r] + gap / 2.0;
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(area.min.x, y - gap / 2.0),
+                egui::pos2(area.max.x, y + gap / 2.0),
+            );
+            let resp = ui
+                .interact(rect, ui.id().with(("hsplit", r)), egui::Sense::drag())
+                .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+            if resp.hovered() || resp.dragged() {
+                ui.painter().hline(rect.x_range(), y, egui::Stroke::new(2.0, line));
+            }
+            if resp.dragged() {
+                let df = resp.drag_delta().y / total_h;
+                self.shift_frac(false, r, df, MIN_FRAC);
+            }
+        }
+    }
+
+    /// Move `df` of the total from track `i+1` into track `i` (or back), within
+    /// the grid's column (`cols=true`) or row fractions, respecting `min`.
+    fn shift_frac(&mut self, cols: bool, i: usize, df: f32, min: f32) {
+        let fracs = if cols { &mut self.col_fracs } else { &mut self.row_fracs };
+        if i + 1 >= fracs.len() {
+            return;
+        }
+        // Clamp so neither adjacent track drops below `min`.
+        let df = df.clamp(-(fracs[i] - min), fracs[i + 1] - min);
+        fracs[i] += df;
+        fracs[i + 1] -= df;
     }
 
     /// Render one terminal pane (resize, draw, focus, input).
@@ -1016,7 +1249,19 @@ impl AtermApp {
             }
         }
 
-        let response = render::draw(ui, &self.tabs[i].term, metrics, focused, link_span);
+        // Highlight every visible occurrence of the search query (the focused
+        // pane only, while the search bar is open).
+        let matches: Vec<(usize, usize, usize)> = if focused
+            && self.search_open
+            && !self.search_query.is_empty()
+        {
+            self.tabs[i].term.viewport_matches(&self.search_query)
+        } else {
+            Vec::new()
+        };
+
+        let response =
+            render::draw(ui, &self.tabs[i].term, metrics, focused, link_span, &matches);
 
         if focused && self.focus_pending {
             response.request_focus();
@@ -1296,13 +1541,8 @@ impl AtermApp {
                                 self.search_last = None;
                                 continue;
                             }
-                            egui::Key::T if modifiers.shift => {
-                                if let Some((argv, cwd, key)) = self.closed_stack.pop() {
-                                    let ctx = ui.ctx().clone();
-                                    self.open_tab(&ctx, argv, cwd, key);
-                                }
-                                continue;
-                            }
+                            // Ctrl+Shift+T (reabrir pestaña) se maneja a nivel
+                            // global en update(), no aquí.
                             _ => {}
                         }
                     }

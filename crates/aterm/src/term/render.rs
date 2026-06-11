@@ -83,6 +83,8 @@ pub fn draw(
     focused: bool,
     // Optional `(screen_line, start_col, end_col)` to underline (hovered link).
     link_span: Option<(usize, usize, usize)>,
+    // `(screen_line, start_col, end_col)` spans to highlight (search matches).
+    matches: &[(usize, usize, usize)],
 ) -> egui::Response {
     let avail = ui.available_size();
     let (rect, response) = ui.allocate_exact_size(avail, egui::Sense::click_and_drag());
@@ -94,6 +96,7 @@ pub fn draw(
     let default_fg = to_rgb(theme.term_fg);
     let default_bg = to_rgb(theme.term_bg);
     let selection_bg = to_rgb(theme.selection);
+    let match_bg = theme.yellow; // search-match highlight
 
     // Backdrop: the terminal default background under the whole panel.
     painter.rect_filled(rect, 0.0, color32(default_bg));
@@ -148,7 +151,18 @@ pub fn draw(
 
         let selected = selection.map_or(false, |r| r.contains(point));
         if selected {
-            painter.rect_filled(cell_rect, 0.0, color32(selection_bg));
+            // Solapamos el rect con el vecino (+1px abajo/derecha): con anchos de
+            // celda fraccionarios, rects contiguos dejan huecos de subpíxel donde
+            // asoma el fondo y se ve una "cuadrícula". El solape los elimina y la
+            // selección queda como una banda continua.
+            let sel_rect = Rect::from_min_size(pos, Vec2::new(cell_w + 1.0, metrics.height + 1.0));
+            painter.rect_filled(sel_rect, 0.0, color32(selection_bg));
+        } else if matches
+            .iter()
+            .any(|&(ml, ms, me)| line as usize == ml && col >= ms && col < me)
+        {
+            let m_rect = Rect::from_min_size(pos, Vec2::new(cell_w + 1.0, metrics.height + 1.0));
+            painter.rect_filled(m_rect, 0.0, match_bg.gamma_multiply(0.45));
         } else if bg != default_bg {
             painter.rect_filled(cell_rect, 0.0, color32(bg));
         }
