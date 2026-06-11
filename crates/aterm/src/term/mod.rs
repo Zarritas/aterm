@@ -64,8 +64,9 @@ impl Dimensions for TermSize {
     }
 }
 
-/// Find an `http(s)://` URL covering char index `col` in `line`. Stops at
-/// whitespace and trims trailing punctuation that's usually not part of a link.
+/// Find a URL covering char index `col` in `line`: `http(s)://…` anywhere, or a
+/// bare `www.…` at a word boundary (returned with an `https://` scheme). Stops
+/// at whitespace and trims trailing punctuation that's usually not part of it.
 fn url_in_line(line: &[char], col: usize) -> Option<String> {
     let starts = |i: usize, p: &str| -> bool {
         let pc: Vec<char> = p.chars().collect();
@@ -74,18 +75,28 @@ fn url_in_line(line: &[char], col: usize) -> Option<String> {
     let n = line.len();
     let mut i = 0;
     while i < n {
-        if starts(i, "https://") || starts(i, "http://") {
+        let scheme = starts(i, "https://") || starts(i, "http://");
+        // `www.` only at a word boundary, so "xwww." doesn't match.
+        let bare_www = starts(i, "www.") && (i == 0 || line[i - 1].is_whitespace());
+        if scheme || bare_www {
             let mut j = i;
-            while j < n && !line[j].is_whitespace() && !matches!(line[j], '"' | '<' | '>' | '`' | '\'') {
+            while j < n
+                && !line[j].is_whitespace()
+                && !matches!(line[j], '"' | '<' | '>' | '`' | '\'')
+            {
                 j += 1;
             }
-            // Trim trailing punctuation like ).,;:
             let mut end = j;
             while end > i && matches!(line[end - 1], ')' | '.' | ',' | ';' | ':' | ']' | '}') {
                 end -= 1;
             }
             if col >= i && col < end {
-                return Some(line[i..end].iter().collect());
+                let text: String = line[i..end].iter().collect();
+                return Some(if bare_www {
+                    format!("https://{text}")
+                } else {
+                    text
+                });
             }
             i = j;
         } else {
@@ -288,7 +299,9 @@ impl TermInstance {
         self.term.lock().selection_to_string()
     }
 
-    /// The http(s) URL under viewport cell `(col, vline)`, if any.
+    /// The URL under viewport cell `(col, vline)`, if any. Prefers an explicit
+    /// OSC-8 hyperlink on the cell; otherwise scans the line for an http(s)/www.
+    /// pattern.
     pub fn url_at(&self, col: usize, vline: usize) -> Option<String> {
         use alacritty_terminal::term::viewport_to_point;
         let term = self.term.lock();
@@ -298,7 +311,14 @@ impl TermInstance {
             return None;
         }
         let cols = grid.columns();
+        if col >= cols {
+            return None;
+        }
         let row = &grid[point.line];
+        // OSC-8: an explicit hyperlink set on the cell wins.
+        if let Some(h) = row[Column(col)].hyperlink() {
+            return Some(h.uri().to_string());
+        }
         let line: Vec<char> = (0..cols).map(|c| row[Column(c)].c).collect();
         url_in_line(&line, col)
     }
@@ -576,5 +596,16 @@ mod url_tests {
     #[test]
     fn no_url() {
         assert_eq!(url_in_line(&chars("solo texto plano"), 3), None);
+    }
+
+    #[test]
+    fn bare_www_gets_https_scheme() {
+        let l = chars("mira www.ejemplo.com ya");
+        assert_eq!(
+            url_in_line(&l, 7).as_deref(),
+            Some("https://www.ejemplo.com")
+        );
+        // Not at a word boundary → no match.
+        assert_eq!(url_in_line(&chars("xwww.no.com"), 2), None);
     }
 }
