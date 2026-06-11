@@ -129,6 +129,8 @@ pub struct AtermApp {
     settings_open: bool,
     /// Active category in the settings dialog.
     settings_cat: SettingsCat,
+    /// Tab id pending a close confirmation (process still running).
+    close_confirm: Option<u64>,
 }
 
 impl Default for AtermApp {
@@ -149,6 +151,7 @@ impl Default for AtermApp {
             panel_open: true,
             settings_open: false,
             settings_cat: SettingsCat::default(),
+            close_confirm: None,
         }
     }
 }
@@ -458,7 +461,16 @@ impl eframe::App for AtermApp {
                     self.toggle_split(id);
                 }
                 if let Some(id) = to_close {
-                    self.close_tab(id);
+                    // A live child gets a confirmation; an exited one closes now.
+                    let alive = self
+                        .tabs
+                        .iter()
+                        .any(|t| t.id == id && t.term.exit_code().is_none());
+                    if alive {
+                        self.close_confirm = Some(id);
+                    } else {
+                        self.close_tab(id);
+                    }
                 }
 
                 // Settings cog, pushed to the right edge of the header.
@@ -523,11 +535,69 @@ impl eframe::App for AtermApp {
 
         self.tab_edit_window(ctx);
         self.settings_window(ctx);
+        self.close_confirm_window(ctx);
         self.render_detached(ctx);
     }
 }
 
 impl AtermApp {
+    /// Confirm before closing a tab whose child is still running.
+    fn close_confirm_window(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.close_confirm else {
+            return;
+        };
+        // If it exited meanwhile, just close it.
+        let alive = self
+            .tabs
+            .iter()
+            .any(|t| t.id == id && t.term.exit_code().is_none());
+        if !alive {
+            self.close_tab(id);
+            self.close_confirm = None;
+            return;
+        }
+        let name = self
+            .tabs
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| t.name.clone().unwrap_or_else(|| t.term.title()))
+            .unwrap_or_default();
+        let mut open = true;
+        let mut decision: Option<bool> = None; // Some(true)=close, Some(false)=cancel
+        egui::Window::new("Cerrar terminal")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "«{}» tiene un proceso en ejecución.\n¿Cerrar de todos modos?",
+                    truncate(&name, 40)
+                ));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(egui::RichText::new("Cerrar").color(crate::theme::pal().red))
+                        .clicked()
+                    {
+                        decision = Some(true);
+                    }
+                    if ui.button("Cancelar").clicked() {
+                        decision = Some(false);
+                    }
+                });
+            });
+        match decision {
+            Some(true) => {
+                self.close_tab(id);
+                self.close_confirm = None;
+            }
+            Some(false) => self.close_confirm = None,
+            None if !open => self.close_confirm = None, // window's × = cancel
+            None => {}
+        }
+    }
+
     /// Render each detached terminal in its own OS window (immediate viewport,
     /// so it can borrow the live `TermInstance`). Closing the window re-attaches.
     fn render_detached(&mut self, ctx: &egui::Context) {
@@ -1037,10 +1107,36 @@ impl AtermApp {
         let app_cursor = modes.app_cursor;
         let events = ui.input(|i| i.events.clone());
 
+        // egui-winit turns Ctrl+C/X/V into Copy/Cut/Paste events (and drops the
+        // Key event), so we read modifiers separately to tell the terminal
+        // chords (Ctrl+C = SIGINT) from the app ones (Ctrl+Shift+C = copy).
+        let shift = ui.input(|i| i.modifiers.shift);
         for event in events {
             match event {
                 egui::Event::Text(text) => {
                     self.tabs[idx].term.write(text.as_bytes());
+                }
+                // Ctrl+C (no Shift) → SIGINT; Ctrl+Shift+C → copy selection.
+                egui::Event::Copy => {
+                    if shift {
+                        if let Some(t) = self.tabs[idx].term.selection_text() {
+                            self.copy(t);
+                        }
+                    } else {
+                        self.tabs[idx].term.write(&[0x03]);
+                    }
+                }
+                // Ctrl+X → 0x18 (terminals don't have a "cut").
+                egui::Event::Cut => {
+                    self.tabs[idx].term.write(&[0x18]);
+                }
+                // Ctrl+Shift+V → paste; Ctrl+V → 0x16 (literal-next).
+                egui::Event::Paste(text) => {
+                    if shift {
+                        self.paste_into(idx, &text, modes.bracketed_paste);
+                    } else {
+                        self.tabs[idx].term.write(&[0x16]);
+                    }
                 }
                 egui::Event::Key {
                     key,
@@ -1048,7 +1144,7 @@ impl AtermApp {
                     modifiers,
                     ..
                 } => {
-                    // Ctrl(+Shift) chords handled by the app, not the child.
+                    // App chords that aren't intercepted as Copy/Cut/Paste.
                     if modifiers.ctrl {
                         match key {
                             egui::Key::Plus | egui::Key::Equals => {
@@ -1061,18 +1157,6 @@ impl AtermApp {
                             }
                             egui::Key::Num0 => {
                                 self.tabs[idx].font_size = crate::settings::get().term_font;
-                                continue;
-                            }
-                            egui::Key::C if modifiers.shift => {
-                                if let Some(t) = self.tabs[idx].term.selection_text() {
-                                    self.copy(t);
-                                }
-                                continue;
-                            }
-                            egui::Key::V if modifiers.shift => {
-                                if let Some(t) = self.paste_text() {
-                                    self.paste_into(idx, &t, modes.bracketed_paste);
-                                }
                                 continue;
                             }
                             egui::Key::F if modifiers.shift => {
