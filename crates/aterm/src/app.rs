@@ -990,8 +990,9 @@ impl AtermApp {
             }
         }
 
-        // Link under the pointer → underline it, and show a hand when Ctrl is
-        // held (Ctrl+click opens it).
+        // Cursor feedback over the grid: hand over a Ctrl-hovered link, text
+        // I-beam where local selection is available, default while the child
+        // owns the mouse. Also underline the hovered link.
         let rect = ui.available_rect_before_wrap();
         let mut link_span: Option<(usize, usize, usize)> = None;
         if let Some(p) = ui.input(|inp| inp.pointer.hover_pos()) {
@@ -999,11 +1000,18 @@ impl AtermApp {
                 let local = p - rect.min;
                 let col = (local.x / metrics.width).floor().max(0.0) as usize;
                 let vline = (local.y / metrics.height).floor().max(0.0) as usize;
-                if let Some((s, e)) = self.tabs[i].term.url_span_at(col, vline) {
+                let link = self.tabs[i].term.url_span_at(col, vline);
+                let ctrl = ui.input(|inp| inp.modifiers.ctrl);
+                let shift = ui.input(|inp| inp.modifiers.shift);
+                let mouse_report = self.tabs[i].term.modes().mouse_report;
+                if link.is_some() && ctrl {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                } else if !mouse_report || shift {
+                    // Selection is available here → text I-beam.
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                }
+                if let Some((s, e)) = link {
                     link_span = Some((vline, s, e));
-                    if ui.input(|inp| inp.modifiers.ctrl) {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
                 }
             }
         }
