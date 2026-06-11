@@ -86,6 +86,9 @@ struct Tab {
     color: Option<egui::Color32>,
     /// When true, this terminal is shown in its own OS window, not the grid.
     detached: bool,
+    /// How this tab was spawned, so a closed tab can be reopened (Ctrl+Shift+T).
+    argv: Vec<String>,
+    cwd: Option<std::path::PathBuf>,
 }
 
 /// In-flight tab rename/recolour dialog.
@@ -131,6 +134,10 @@ pub struct AtermApp {
     settings_cat: SettingsCat,
     /// Tab id pending a close confirmation (process still running).
     close_confirm: Option<u64>,
+    /// Spawn specs of recently closed tabs, for reopen (Ctrl+Shift+T).
+    closed_stack: Vec<(Vec<String>, Option<std::path::PathBuf>, Option<String>)>,
+    /// Showing the "quit with running processes?" confirmation.
+    quit_confirm: bool,
 }
 
 impl Default for AtermApp {
@@ -152,6 +159,8 @@ impl Default for AtermApp {
             settings_open: false,
             settings_cat: SettingsCat::default(),
             close_confirm: None,
+            closed_stack: Vec::new(),
+            quit_confirm: false,
         }
     }
 }
@@ -188,7 +197,7 @@ impl AtermApp {
             cell_width: metrics.width,
             cell_height: metrics.height,
         };
-        match TermInstance::spawn(argv, cwd, size, ctx.clone()) {
+        match TermInstance::spawn(argv.clone(), cwd.clone(), size, ctx.clone()) {
             Ok(term) => {
                 let id = self.next_id;
                 self.next_id += 1;
@@ -201,6 +210,8 @@ impl AtermApp {
                     name: None,
                     color: None,
                     detached: false,
+                    argv,
+                    cwd,
                 });
                 // A fresh terminal takes over the view as a single pane.
                 self.visible = vec![id];
@@ -238,6 +249,13 @@ impl AtermApp {
         let Some(i) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
+        // Remember how to respawn it (Ctrl+Shift+T).
+        let t = &self.tabs[i];
+        self.closed_stack
+            .push((t.argv.clone(), t.cwd.clone(), t.key.clone()));
+        if self.closed_stack.len() > 20 {
+            self.closed_stack.remove(0);
+        }
         self.tabs.remove(i); // `Drop` shuts the PTY down.
         self.visible.retain(|v| *v != id);
         if self.visible.is_empty() {
@@ -321,6 +339,14 @@ impl eframe::App for AtermApp {
             }
         }
 
+        // Intercept window close: confirm if any terminal has a running command.
+        if ctx.input(|i| i.viewport().close_requested())
+            && self.tabs.iter().any(|t| t.term.has_foreground_process())
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.quit_confirm = true;
+        }
+
         // Header first → it spans the full width on top; the session panel sits
         // *below* it on the left (so the sidebar never overlaps the header).
         egui::TopBottomPanel::top("header").show(ctx, |ui| {
@@ -351,14 +377,16 @@ impl eframe::App for AtermApp {
                 for tab in &self.tabs {
                     let id = tab.id;
                     let shown = self.visible.contains(&id);
+                    // Bell on an unfocused tab → attention marker + colour.
+                    let bell = id != self.focused && tab.term.bell_rung();
                     // User name overrides the child title.
-                    let label = truncate(
-                        tab.name.as_deref().unwrap_or(&tab.term.title()),
-                        22,
-                    );
+                    let base = truncate(tab.name.as_deref().unwrap_or(&tab.term.title()), 22);
+                    let label = if bell { format!("• {base}") } else { base };
                     let mut text = egui::RichText::new(label);
-                    // Custom colour wins; else the focused pane shows in accent.
-                    if let Some(c) = tab.color {
+                    // Bell > custom colour > focused accent.
+                    if bell {
+                        text = text.color(crate::theme::pal().peach);
+                    } else if let Some(c) = tab.color {
                         text = text.color(c);
                     } else if id == self.focused {
                         text = text.color(egui::Color32::from_rgb(0xb4, 0xbe, 0xfe));
@@ -537,11 +565,57 @@ impl eframe::App for AtermApp {
         self.tab_edit_window(ctx);
         self.settings_window(ctx);
         self.close_confirm_window(ctx);
+        self.quit_confirm_window(ctx);
         self.render_detached(ctx);
     }
 }
 
 impl AtermApp {
+    /// Confirm quitting the whole app while terminals have running commands.
+    fn quit_confirm_window(&mut self, ctx: &egui::Context) {
+        if !self.quit_confirm {
+            return;
+        }
+        let running = self
+            .tabs
+            .iter()
+            .filter(|t| t.term.has_foreground_process())
+            .count();
+        let mut open = true;
+        let mut decision: Option<bool> = None;
+        egui::Window::new("Salir de aterm")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Hay {running} terminal(es) con un proceso en ejecución.\n¿Salir de todos modos?"
+                ));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(egui::RichText::new("Salir").color(crate::theme::pal().red))
+                        .clicked()
+                    {
+                        decision = Some(true);
+                    }
+                    if ui.button("Cancelar").clicked() {
+                        decision = Some(false);
+                    }
+                });
+            });
+        match decision {
+            Some(true) => {
+                self.quit_confirm = false;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Some(false) => self.quit_confirm = false,
+            None if !open => self.quit_confirm = false,
+            None => {}
+        }
+    }
+
     /// Confirm before closing a tab whose child is still running.
     fn close_confirm_window(&mut self, ctx: &egui::Context) {
         let Some(id) = self.close_confirm else {
@@ -899,6 +973,9 @@ impl AtermApp {
             return;
         };
         let focused = id == self.focused;
+        if focused {
+            self.tabs[i].term.clear_bell(); // viewing the tab dismisses the bell
+        }
         let metrics = CellMetrics::measure(ui.ctx(), self.tabs[i].font_size);
         let (cols, lines) = metrics.grid_size(ui.available_size());
         {
@@ -1191,6 +1268,13 @@ impl AtermApp {
                             egui::Key::F if modifiers.shift => {
                                 self.search_open = !self.search_open;
                                 self.search_last = None;
+                                continue;
+                            }
+                            egui::Key::T if modifiers.shift => {
+                                if let Some((argv, cwd, key)) = self.closed_stack.pop() {
+                                    let ctx = ui.ctx().clone();
+                                    self.open_tab(&ctx, argv, cwd, key);
+                                }
                                 continue;
                             }
                             _ => {}

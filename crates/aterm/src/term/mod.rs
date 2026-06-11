@@ -117,6 +117,7 @@ pub struct TermInstance {
     notifier: Notifier,
     title: Arc<Mutex<String>>,
     exit_code: Arc<Mutex<Option<i32>>>,
+    bell: Arc<std::sync::atomic::AtomicBool>,
     fallback_title: String,
     /// PTY master fd + the shell's pid, to detect a foreground command (a
     /// process group other than the shell's own owns the terminal).
@@ -179,11 +180,22 @@ impl TermInstance {
             notifier,
             title: proxy.title,
             exit_code: proxy.exit_code,
+            bell: proxy.bell,
             fallback_title: argv.join(" "),
             master_fd,
             shell_pid,
             size,
         })
+    }
+
+    /// Whether the bell has rung since it was last cleared (attention marker).
+    pub fn bell_rung(&self) -> bool {
+        self.bell.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Clear the bell marker (called when the tab is focused).
+    pub fn clear_bell(&self) {
+        self.bell.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// True when a foreground command (other than the shell itself) currently
@@ -376,6 +388,7 @@ pub struct EventProxy {
     sender: Arc<Mutex<Option<EventLoopSender>>>,
     title: Arc<Mutex<String>>,
     exit_code: Arc<Mutex<Option<i32>>>,
+    bell: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl EventProxy {
@@ -385,6 +398,7 @@ impl EventProxy {
             sender: Arc::new(Mutex::new(None)),
             title: Arc::new(Mutex::new(String::new())),
             exit_code: Arc::new(Mutex::new(None)),
+            bell: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -410,7 +424,10 @@ impl EventListener for EventProxy {
                 self.title.lock().unwrap().clear();
                 self.ctx.request_repaint();
             }
-            Event::Bell => self.ctx.request_repaint(),
+            Event::Bell => {
+                self.bell.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.ctx.request_repaint();
+            }
             Event::ChildExit(code) => {
                 *self.exit_code.lock().unwrap() = Some(code);
                 self.ctx.request_repaint();
