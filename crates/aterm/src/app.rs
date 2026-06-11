@@ -461,12 +461,13 @@ impl eframe::App for AtermApp {
                     self.toggle_split(id);
                 }
                 if let Some(id) = to_close {
-                    // A live child gets a confirmation; an exited one closes now.
-                    let alive = self
+                    // Confirm only if a foreground command is running; an idle
+                    // shell (or exited child) closes immediately.
+                    let busy = self
                         .tabs
                         .iter()
-                        .any(|t| t.id == id && t.term.exit_code().is_none());
-                    if alive {
+                        .any(|t| t.id == id && t.term.has_foreground_process());
+                    if busy {
                         self.close_confirm = Some(id);
                     } else {
                         self.close_tab(id);
@@ -546,12 +547,12 @@ impl AtermApp {
         let Some(id) = self.close_confirm else {
             return;
         };
-        // If it exited meanwhile, just close it.
-        let alive = self
+        // If the foreground command finished meanwhile, just close it.
+        let busy = self
             .tabs
             .iter()
-            .any(|t| t.id == id && t.term.exit_code().is_none());
-        if !alive {
+            .any(|t| t.id == id && t.term.has_foreground_process());
+        if !busy {
             self.close_tab(id);
             self.close_confirm = None;
             return;
@@ -571,7 +572,7 @@ impl AtermApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label(format!(
-                    "«{}» tiene un proceso en ejecución.\n¿Cerrar de todos modos?",
+                    "«{}» tiene un proceso en primer plano.\n¿Cerrar de todos modos?",
                     truncate(&name, 40)
                 ));
                 ui.add_space(8.0);

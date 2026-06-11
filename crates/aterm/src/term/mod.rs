@@ -87,6 +87,10 @@ pub struct TermInstance {
     title: Arc<Mutex<String>>,
     exit_code: Arc<Mutex<Option<i32>>>,
     fallback_title: String,
+    /// PTY master fd + the shell's pid, to detect a foreground command (a
+    /// process group other than the shell's own owns the terminal).
+    master_fd: i32,
+    shell_pid: i32,
     pub size: TermSize,
 }
 
@@ -117,6 +121,12 @@ impl TermInstance {
         };
 
         let pty = tty::new(&options, size.window_size(), 0)?;
+        // Grab the master fd + shell pid before the PTY moves into the loop.
+        let master_fd = {
+            use std::os::fd::AsRawFd;
+            pty.file().as_raw_fd()
+        };
+        let shell_pid = pty.child().id() as i32;
 
         let proxy = EventProxy::new(ctx);
         let term = Term::new(Config::default(), &size, proxy.clone());
@@ -139,8 +149,21 @@ impl TermInstance {
             title: proxy.title,
             exit_code: proxy.exit_code,
             fallback_title: argv.join(" "),
+            master_fd,
+            shell_pid,
             size,
         })
+    }
+
+    /// True when a foreground command (other than the shell itself) currently
+    /// owns the terminal — i.e. there's a running process worth confirming
+    /// before closing. Best-effort via `tcgetpgrp`.
+    pub fn has_foreground_process(&self) -> bool {
+        if self.exit_code().is_some() {
+            return false;
+        }
+        let pgrp = unsafe { libc::tcgetpgrp(self.master_fd) };
+        pgrp > 0 && pgrp != self.shell_pid
     }
 
     /// Send raw bytes to the child (from input.rs key mapping).

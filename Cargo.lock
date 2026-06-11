@@ -421,6 +421,7 @@ dependencies = [
  "arboard",
  "eframe",
  "egui",
+ "libc",
  "serde",
  "serde_json",
 ]
