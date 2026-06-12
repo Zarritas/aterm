@@ -1,8 +1,9 @@
 # aterm — native terminal with a built-in coding-agent session manager.
-# Workspace: `agent-sessions` (vendored session-discovery core) + `aterm` (the app).
+# Workspace: `agent-sessions` (session-discovery core) + `aterm` (the app) +
+# `agent-sessions-cli` (JSON sidecar for the VS Code extension).
 [workspace]
 resolver = "2"
-members = ["crates/agent-sessions", "crates/aterm"]
+members = ["crates/agent-sessions", "crates/agent-sessions-cli", "crates/aterm"]
 
 [workspace.package]
 edition = "2021"

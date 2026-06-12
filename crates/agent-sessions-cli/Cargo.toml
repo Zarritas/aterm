@@ -1,0 +1,17 @@
+# JSON sidecar over `agent-sessions`: a stateless, read-only binary the VS Code
+# extension spawns to discover / preview / resume coding-agent sessions. The
+# heavy lifting stays in the shared core; this is just argv → JSON on stdout.
+[package]
+name = "agent-sessions-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "JSON CLI over agent-sessions, for the VS Code extension to consume"
+
+[[bin]]
+name = "agent-sessions-cli"
+path = "src/main.rs"
+
+[dependencies]
+agent-sessions = { path = "../agent-sessions" }
+serde_json = "1"

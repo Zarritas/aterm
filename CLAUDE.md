@@ -35,6 +35,8 @@ aterm/                         # workspace Cargo
 ├── crates/
 │   ├── agent-sessions/        # VENDOR verbatim de warp_agent_history (read-only)
 │   │   └── src/{providers/*, extract, live, metadata, transfer, provider, types}
+│   ├── agent-sessions-cli/    # sidecar: envuelve el core y emite JSON por stdout
+│   │   └── src/main.rs        #   scan/preview/resume-argv/new-argv/providers
 │   └── aterm/                 # la app
 │       └── src/
 │           ├── main.rs        # entrada: instala fuentes/tema y lanza AtermApp
@@ -48,7 +50,17 @@ aterm/                         # workspace Cargo
 │               ├── mod.rs     #   TermInstance: PTY + Term + EventLoop + selección/búsqueda
 │               ├── render.rs  #   grid de celdas → egui (EL GRUESO)
 │               └── input.rs   #   tecla → bytes de escape · mouse_report SGR/X10
+└── vscode-extension/          # 2ª UI: extensión de VS Code (TypeScript)
+    └── src/extension.ts       #   TreeView + reanudar en terminal integrado
 ```
+
+**Segunda vía de UI (VS Code).** El mismo core `agent-sessions` alimenta dos
+frontends: la app nativa `aterm` y una **extensión de VS Code**. En el editor el
+terminal ya lo pone VS Code (`window.createTerminal`), así que la extensión solo
+porta la *mitad gestor de sesiones*: un `TreeDataProvider` que llama al sidecar
+`agent-sessions-cli` (JSON por stdout) y reanuda con el `resumeArgv` del proveedor.
+El sidecar es read-only y deriva rutas del `$HOME` (misma propiedad que el core).
+Pendiente para distribución: empaquetar el binario sidecar por plataforma en el `.vsix`.
 
 **Reparto de superficie** (lo importante de entender):
 - `alacritty_terminal` (dep) → modelo VT + PTY + parser + **read-loop en thread**. Gratis.

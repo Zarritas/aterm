@@ -1,0 +1,114 @@
+{
+  "name": "agent-sessions",
+  "displayName": "Agent Sessions",
+  "description": "Lista, previsualiza y reanuda tus sesiones de agentes de código (Claude Code, Codex, OpenCode, Gemini) en el terminal integrado.",
+  "version": "0.1.0",
+  "publisher": "factorlibre",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentSessions",
+          "title": "Agent Sessions",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentSessions": [
+        {
+          "id": "agentSessions.sessions",
+          "name": "Sesiones",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "agentSessions.sessions",
+        "contents": "No se encontraron sesiones de agentes.\n\nComprueba que el sidecar está disponible (ajuste `agentSessions.cliPath`) y que has usado algún agente (Claude Code, Codex, OpenCode, Gemini).\n[Refrescar](command:agentSessions.refresh)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "agentSessions.refresh",
+        "title": "Refrescar",
+        "category": "Agent Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentSessions.resume",
+        "title": "Reanudar en terminal",
+        "category": "Agent Sessions",
+        "icon": "$(play)"
+      },
+      {
+        "command": "agentSessions.preview",
+        "title": "Previsualizar conversación",
+        "category": "Agent Sessions",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "agentSessions.newSession",
+        "title": "Nueva sesión",
+        "category": "Agent Sessions",
+        "icon": "$(add)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentSessions.newSession",
+          "when": "view == agentSessions.sessions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentSessions.refresh",
+          "when": "view == agentSessions.sessions",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "agentSessions.resume",
+          "when": "view == agentSessions.sessions && viewItem == session",
+          "group": "inline@1"
+        },
+        {
+          "command": "agentSessions.preview",
+          "when": "view == agentSessions.sessions && viewItem == session",
+          "group": "inline@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Agent Sessions",
+      "properties": {
+        "agentSessions.cliPath": {
+          "type": "string",
+          "default": "agent-sessions-cli",
+          "description": "Ruta al binario sidecar `agent-sessions-cli`. Por defecto se busca en el PATH."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
