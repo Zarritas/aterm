@@ -234,9 +234,15 @@ function launch(name: string, cwd: string | null | undefined, argv: string[]): v
     );
     return;
   }
+  // Open in the editor area (a full-size tab) by default, instead of the small
+  // bottom panel — agent TUIs want the room. Configurable.
+  const inEditor = vscode.workspace
+    .getConfiguration("agentSessions")
+    .get<boolean>("openInEditor", true);
   const terminal = vscode.window.createTerminal({
     name,
     cwd: cwd ?? undefined,
+    location: inEditor ? vscode.TerminalLocation.Editor : undefined,
   });
   terminal.show();
   terminal.sendText(shellJoin(argv), true);

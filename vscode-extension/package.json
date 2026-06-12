@@ -97,6 +97,11 @@
           "type": "string",
           "default": "agent-sessions-cli",
           "description": "Ruta al binario sidecar `agent-sessions-cli`. Por defecto se busca en el PATH."
+        },
+        "agentSessions.openInEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Abrir las sesiones en el área del editor (pestaña a tamaño completo) en vez del panel inferior."
         }
       }
     }
