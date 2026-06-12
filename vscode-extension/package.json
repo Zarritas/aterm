@@ -17,14 +17,14 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "agentSessions",
+          "id": "atermSessions",
           "title": "Agent Sessions",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "agentSessions": [
+      "atermSessions": [
         {
           "id": "agentSessions.sessions",
           "name": "Sesiones",
