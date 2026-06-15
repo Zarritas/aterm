@@ -26,68 +26,68 @@ nunca recibe paths del editor). Sí escribe en `~/.config/aterm/session-metadata
 (rename/tags/color) y en `~/.claude/projects/**` al importar — los mismos sitios
 que usa la app nativa, así ambas UIs ven la misma metadata.
 
-## Estado (MVP)
+> Funciona en VS Code y en sus forks (Cursor, VSCodium, Windsurf, …): se publica
+> en el Marketplace de VS Code y en [Open VSX](https://open-vsx.org/extension/Zarritas/agent-sessions).
 
-- ✅ Panel de sesiones tipo card (avatar de proveedor, dos líneas de meta,
-  acento de color del proyecto, acciones al hover).
-- ✅ Reanudar en terminal integrado (clic o ▶) con el `resumeArgv` del proveedor.
-- ✅ Previsualizar la conversación (Markdown read-only).
-- ✅ Nueva sesión (elige proveedor → terminal nuevo).
-- ✅ Filtro: caja de búsqueda contra título/nombre/cwd/rama/etiquetas.
-- ✅ Agrupado: proveedor / proyecto (cwd) / cascada (proveedor → proyecto → sesión).
-- ✅ Metadata: renombrar, etiquetas, color (compartido con la app nativa).
-- ✅ Proyectos: alias y color por proyecto (cwd), compartido con la app nativa
-  (`~/.config/aterm/project-names.json`).
-- ✅ Modelo visible en la descripción de cada sesión.
-- ✅ Borrar sesión (con confirmación; force-retry si el proveedor la marca activa).
-- ✅ Filtro por etiqueta: clic en `#tag` lo añade o quita del filtro (predicado exacto).
-- ✅ Quota del proveedor: pill de % en el header con tooltip por ventana.
-- ✅ Indicador "abierta" en sesiones ya lanzadas en este VS Code; el clic enfoca
-  el terminal existente en vez de duplicar el resume.
-- ✅ Drag & drop de Claude entre proyectos (mueve el jsonl y el subagents subdir).
-- ✅ Notas + favoritos (estrella) por sesión; los favoritos suben arriba.
-- ✅ Agrupado adicional por **fecha** (Hoy / Ayer / Esta semana / Este mes / Más antiguo).
-- ✅ **Dashboard** con KPIs (sesiones, coste $, tokens), barras por proveedor /
-  top proyectos y sparkline de 30 días.
-- ✅ **MCP server** (`agent-sessions-cli serve`) que expone tools `list_sessions`,
-  `get_session_turns`, `search_sessions` para que el propio agente consulte su
-  historial. Ver "Uso como MCP" más abajo.
-- ✅ **Comparativa paralela** (`Agent Sessions: Lanzar comparativa paralela…`):
-  un git worktree por agente, terminal por worktree, mismo prompt enviado a
-  todos. Limpieza con `…: Limpiar worktrees de comparativa…`.
-- ✅ Export a `.zip` (byte-compatible con multi-claude) e import (sólo Claude).
-- ✅ Auto-localización del sidecar (binario empaquetado en el `.vsix` o cargo target).
-- ✅ **Filtros rápidos** en el header: botón «solo activos» (toggle `active:true`)
-  y botón «por etiqueta» (popover con las tags en uso y su conteo, multi-selección).
-- ✅ **Catálogo de etiquetas** (`agentSessions.tagCatalog` + comando «Gestionar
-  catálogo de etiquetas»): al asignar tags eliges de una lista marcable en vez
-  de escribirlas.
-- ✅ **Compactar contexto** (»« en el menú contextual, solo Claude): lanza el
-  `/compact` del proveedor en un terminal efímero sin reanudar la conversación.
-- ✅ **Nueva sesión eligiendo directorio**: workspace, cualquier cwd conocido del
-  proveedor (con su alias) u otra ruta vía diálogo de carpeta. Además, cada
-  cabecera de bucket de proyecto tiene acciones rápidas **«nueva sesión aquí»** y
-  **«abrir terminal aquí»** (terminal normal en ese cwd, sin agente).
-- ✅ **Plegar / desplegar todas las secciones** con un botón de la barra.
-- ✅ **Continuar en otro agente** (handoff) y **reanudar con prompt** desde el menú.
-- ✅ **Plantillas** de lanzamiento, **backup/restore** del catálogo y **alerta de
-  coste diario** (con indicador en la barra de estado).
-- ✅ Búsqueda en el **contenido** de las conversaciones (FTS) vía `search-content`.
-- ✅ Ajustes de **proveedores visibles** (`scanProviders`), **interruptor de red**
-  (`fetchStatus`) y **auto-refresco completo** periódico (`refreshSec`).
-- ✅ **Terminal Profiles por proveedor**: Claude/Codex/OpenCode/Gemini en el
-  desplegable `+` del terminal integrado.
-- ✅ **Paleta de acciones** (`Ctrl/Cmd+Alt+A`): quick-pick de todas las sesiones
-  → menú de acciones, sin ratón.
-- ✅ **Copiar/guardar la conversación** como Markdown (portapapeles o `.md`).
-- ✅ **Modo compacto** (toggle de densidad en la barra) para ver más sesiones.
-- ✅ **Plantillas con etiquetas y cwd**: al guardar pides tags y directorio; al
-  lanzar, pregunta el cwd si la plantilla no lo fija.
-- ✅ **Búsqueda en contenido dentro del panel**: el botón 🔍 junto al filtro usa
-  el texto como query (FTS) y muestra los resultados como cards con el fragmento
-  resaltado; clic = reanudar.
-- ✅ **Configurar MCP con un clic** (`Agent Sessions: Configurar servidor MCP…`):
-  escribe `.vscode/mcp.json` o copia el snippet `mcpServers` para Claude Code/Cursor.
+## Funcionalidades
+
+### Panel y navegación
+- Panel de sesiones tipo **card** (avatar de proveedor, dos líneas de meta, acento
+  de color del proyecto, acciones al hover) — no un TreeView.
+- **Agrupado** por proveedor / proyecto (cwd) / cascada / **fecha** (Hoy, Ayer, …).
+- **Modo compacto** (toggle de densidad) para ver más sesiones de un vistazo.
+- **Plegar / desplegar** todas las secciones con un botón.
+- **Paleta de acciones** (`Ctrl/Cmd+Alt+A`): quick-pick de todas las sesiones →
+  menú de acciones, sin ratón.
+- Modelo visible por sesión; indicador **"abierta"** (el clic enfoca el terminal
+  existente en vez de duplicar el resume).
+
+### Reanudar y lanzar
+- **Reanudar** en el terminal integrado (clic o ▶) con el `resumeArgv` del proveedor.
+- **Reanudar con prompt** y **Continuar en otro agente** (handoff) desde el menú.
+- **Nueva sesión** eligiendo directorio (workspace / cwd conocido con alias / otra
+  ruta), con acciones rápidas **«nueva sesión aquí»** y **«abrir terminal aquí»**
+  en cada cabecera de proyecto.
+- **Smart-launch**: agente recomendado según el cwd.
+- **Compactar contexto** (»«, solo Claude): lanza `/compact` sin reanudar.
+- **Terminal Profiles** por proveedor en el desplegable `+` del terminal.
+- **Plantillas** de lanzamiento con etiquetas y cwd; **comparativa paralela** con
+  un git worktree por agente.
+
+### Búsqueda y filtros
+- Filtro con **predicados**: `provider:`, `model:`, `cwd:`, `branch:`, `#tag`,
+  `cost>`, `tokens>`, `ctx>`, `age<`, `has:notes|favorite|persisted`, `active:true`.
+- **Filtros rápidos**: botón «solo activos» y popover **«por etiqueta»**.
+- **Búsqueda en el contenido** (FTS) dentro del panel: el botón 🔍 usa el filtro
+  como query y muestra los resultados con el fragmento resaltado.
+
+### Metadata y organización
+- Renombrar, **etiquetas** (+ **catálogo** de tags reutilizables), **color**,
+  **notas** y **favoritos** por sesión. Compartido con la app nativa.
+- **Proyectos**: alias y color por cwd; **drag & drop** de Claude entre proyectos.
+
+### Persistencia y transferencia
+- ⭐ **Persistir sesiones** (`Persistir` en el menú): guarda una **copia durable**
+  bajo `~/.config/aterm/archive` que **sobrevive aunque el proveedor borre el
+  original** por inactividad. La sesión sigue en el panel (badge naranja) y, al
+  reanudarla, se **restaura al vuelo** a la ruta que Claude espera. (Restaurar/
+  reanudar: Claude por ahora.)
+- **Export** a `.zip` (byte-compatible con multi-claude) e **import** (Claude).
+- **Backup/restore** del catálogo (metadata + proyectos + plantillas).
+- **Copiar/guardar** la conversación como Markdown.
+
+### Costes y monitorización
+- **Quota** del proveedor: pill de % con cuenta atrás hasta el reset.
+- **Dashboard** con KPIs (sesiones, coste $, tokens), barras por proveedor/proyecto
+  y sparkline de 30 días.
+- **Alerta de coste diario** + indicador en la barra de estado.
+- Estado de servicio (statuspage) por proveedor; **notificaciones** idle/finish.
+
+### Integración
+- **MCP server** (`agent-sessions-cli serve`) + comando **«Configurar servidor
+  MCP…»** que lo registra con un clic. Ver "Uso como MCP".
+- **Previsualizar** la conversación (Markdown).
+- Auto-localización del sidecar (empaquetado en el `.vsix` o `target/`).
 
 ## Instalar
 
