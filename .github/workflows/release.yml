@@ -174,3 +174,43 @@ jobs:
           files: out/*
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  # ── Open VSX (open marketplace para forks de VS Code) ───────────────────
+  # Publica un .vsix por plataforma. Se ejecuta solo en push de tag y solo si
+  # el secret OVSX_PAT está configurado; sin él es un no-op (no rompe el run).
+  publish-openvsx:
+    name: Publish to Open VSX
+    needs: build-vsix
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: vsix
+          pattern: agent-sessions-*-vsix
+
+      - name: Publish each platform .vsix
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "OVSX_PAT no configurado → omito la publicación en Open VSX." >&2
+            exit 0
+          fi
+          # Idempotente: si el namespace ya existe, ignora el error.
+          npx --yes ovsx create-namespace Zarritas -p "$OVSX_PAT" || true
+          shopt -s globstar nullglob
+          published=0
+          for f in vsix/**/*.vsix; do
+            echo "→ Publicando $f"
+            npx --yes ovsx publish "$f" -p "$OVSX_PAT"
+            published=$((published + 1))
+          done
+          if [ "$published" -eq 0 ]; then
+            echo "No se encontró ningún .vsix para publicar." >&2
+            exit 1
+          fi
