@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "publisher": "factorlibre",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zarritas/aterm.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -26,18 +30,13 @@
     "views": {
       "atermSessions": [
         {
+          "type": "webview",
           "id": "agentSessions.sessions",
           "name": "Sesiones",
           "icon": "media/icon.svg"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "agentSessions.sessions",
-        "contents": "No se encontraron sesiones de agentes.\n\nComprueba que el sidecar está disponible (ajuste `agentSessions.cliPath`) y que has usado algún agente (Claude Code, Codex, OpenCode, Gemini).\n[Refrescar](command:agentSessions.refresh)"
-      }
-    ],
     "commands": [
       {
         "command": "agentSessions.refresh",
@@ -46,22 +45,103 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "agentSessions.resume",
-        "title": "Reanudar en terminal",
-        "category": "Agent Sessions",
-        "icon": "$(play)"
-      },
-      {
-        "command": "agentSessions.preview",
-        "title": "Previsualizar conversación",
-        "category": "Agent Sessions",
-        "icon": "$(eye)"
-      },
-      {
         "command": "agentSessions.newSession",
         "title": "Nueva sesión",
         "category": "Agent Sessions",
         "icon": "$(add)"
+      },
+      {
+        "command": "agentSessions.smartLaunch",
+        "title": "Lanzar agente recomendado",
+        "category": "Agent Sessions",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "agentSessions.setFilter",
+        "title": "Filtrar sesiones…",
+        "category": "Agent Sessions",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "agentSessions.searchContent",
+        "title": "Buscar en contenido…",
+        "category": "Agent Sessions",
+        "icon": "$(search)"
+      },
+      {
+        "command": "agentSessions.clearFilter",
+        "title": "Limpiar filtro",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.setGroupBy",
+        "title": "Agrupar por…",
+        "category": "Agent Sessions",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "agentSessions.import",
+        "title": "Importar .zip…",
+        "category": "Agent Sessions",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "agentSessions.renameProject",
+        "title": "Renombrar proyecto…",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.setProjectColor",
+        "title": "Color del proyecto…",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.clearProjectMetadata",
+        "title": "Limpiar alias/color del proyecto",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.launchParallel",
+        "title": "Lanzar comparativa paralela…",
+        "category": "Agent Sessions",
+        "icon": "$(repo-forked)"
+      },
+      {
+        "command": "agentSessions.compareWorktrees",
+        "title": "Comparar resultados de worktrees…",
+        "category": "Agent Sessions",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "agentSessions.cleanupWorktrees",
+        "title": "Limpiar worktrees de comparativa…",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.backupCatalog",
+        "title": "Backup del catálogo…",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.restoreCatalog",
+        "title": "Restaurar catálogo…",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.runTemplate",
+        "title": "Lanzar plantilla…",
+        "category": "Agent Sessions",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "agentSessions.saveTemplate",
+        "title": "Guardar plantilla…",
+        "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.manageTemplates",
+        "title": "Gestionar plantillas…",
+        "category": "Agent Sessions"
       }
     ],
     "menus": {
@@ -72,21 +152,19 @@
           "group": "navigation@1"
         },
         {
-          "command": "agentSessions.refresh",
+          "command": "agentSessions.import",
           "when": "view == agentSessions.sessions",
           "group": "navigation@2"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "agentSessions.resume",
-          "when": "view == agentSessions.sessions && viewItem == session",
-          "group": "inline@1"
         },
         {
-          "command": "agentSessions.preview",
-          "when": "view == agentSessions.sessions && viewItem == session",
-          "group": "inline@2"
+          "command": "agentSessions.launchParallel",
+          "when": "view == agentSessions.sessions",
+          "group": "navigation@3"
+        },
+        {
+          "command": "agentSessions.refresh",
+          "when": "view == agentSessions.sessions",
+          "group": "navigation@4"
         }
       ]
     },
@@ -107,6 +185,41 @@
           "type": "boolean",
           "default": true,
           "description": "Cerrar el terminal completo cuando la sesión del agente termina (ejecuta `exit` al acabar)."
+        },
+        "agentSessions.notifyOnIdle": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notificar cuando una sesión activa pasa de “trabajando” a “esperando input”."
+        },
+        "agentSessions.notifyOnFinish": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notificar cuando una sesión deja de estar activa (proceso terminado)."
+        },
+        "agentSessions.pollIntervalSec": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 2,
+          "maximum": 120,
+          "description": "Cada cuántos segundos consultar el estado en vivo de las sesiones (usado para los contadores y notificaciones)."
+        },
+        "agentSessions.costAlertDaily": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Umbral diario de gasto en USD. Si el coste total de las sesiones cuya última actividad fue hoy lo supera, el panel muestra una alerta. 0 desactiva la alerta."
+        },
+        "agentSessions.groupBy": {
+          "type": "string",
+          "enum": ["provider", "project", "cascade", "date"],
+          "enumDescriptions": [
+            "Una rama por proveedor (Claude/Codex/…); plano dentro.",
+            "Una rama por proyecto (cwd); sesiones de cualquier proveedor dentro.",
+            "Proveedor → proyecto → sesión.",
+            "Por fecha: Hoy / Ayer / Esta semana / Este mes / Más antiguo."
+          ],
+          "default": "provider",
+          "description": "Cómo agrupar las sesiones en el panel."
         }
       }
     }
@@ -114,11 +227,13 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "package": "scripts/build-vsix.sh"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
     "typescript": "^5.4.0"
   }
 }

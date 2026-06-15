@@ -132,7 +132,10 @@ name = "agent-sessions-cli"
 version = "0.1.0"
 dependencies = [
  "agent-sessions",
+ "dirs",
+ "serde",
  "serde_json",
+ "zip",
 ]
 
 [[package]]

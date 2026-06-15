@@ -11,7 +11,11 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// One session's local metadata. All fields optional: an entry exists only
-/// once the user sets something.
+/// once the user sets something. `notes` and `favorite` are recent additions;
+/// the `#[serde(default)]` guards make older on-disk files (without these
+/// keys) load fine, and serializing with `skip_serializing_if` keeps the
+/// store byte-stable so a freshly-installed older build round-trips it
+/// without churning the file.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct SessionMetadata {
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -20,11 +24,25 @@ pub struct SessionMetadata {
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub color: Option<String>,
+    /// Free-form notes the user attaches to the session.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub notes: Option<String>,
+    /// Pin-to-top flag.
+    #[serde(skip_serializing_if = "is_false", default)]
+    pub favorite: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !b
 }
 
 impl SessionMetadata {
     pub fn is_empty(&self) -> bool {
-        self.name.is_none() && self.tags.is_empty() && self.color.is_none()
+        self.name.is_none()
+            && self.tags.is_empty()
+            && self.color.is_none()
+            && self.notes.is_none()
+            && !self.favorite
     }
 }
 

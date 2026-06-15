@@ -1,0 +1,688 @@
+/* Webview view styles for Agent Sessions. Tokens from VS Code's theme so the
+   panel tracks light/dark and high-contrast themes automatically. */
+
+:root {
+  --row-pad-y: 8px;
+  --row-pad-x: 10px;
+  --card-radius: 4px;
+  --accent-width: 3px;
+  --gap: 6px;
+  /* Dark-default seed values for every `--vscode-*` token the panel
+     references. When the workbench succeeds at injecting the real theme
+     (the common case), its rules — emitted later in the head — win on
+     specificity tie and these are silently overridden. When it fails (CSP
+     blocked inline-style, outer/inner iframe quirks, …), at least the
+     panel renders with usable contrast instead of grey-on-white. */
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9b9b9b;
+  --vscode-sideBar-background: #252526;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-editorWidget-background: #2a2a2a;
+  --vscode-editorWidget-border: #3a3a3a;
+  --vscode-panel-border: #2a2a2a;
+  --vscode-focusBorder: #007fd4;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #094771;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-list-highlightForeground: #2aaaff;
+  --vscode-input-background: #3c3c3c;
+  --vscode-input-foreground: #cccccc;
+  --vscode-input-border: #3c3c3c;
+  --vscode-input-placeholderForeground: #a6a6a6;
+  --vscode-toolbar-hoverBackground: #2a2d2e;
+  --vscode-toolbar-activeBackground: #094771;
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #1177bb;
+  --vscode-icon-foreground: #c5c5c5;
+  --vscode-progressBar-background: #0e70c0;
+  --vscode-charts-red: #f48771;
+  --vscode-charts-orange: #d18616;
+  --vscode-charts-yellow: #cca700;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-blue: #75beff;
+  --vscode-charts-purple: #b180d7;
+  --vscode-charts-foreground: #cccccc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Defensive: if the workbench fails to inject the theme tokens (CSP rejects
+   its inline <style>, webview cache, …), the panel still has a usable dark
+   palette and the user sees the content instead of grey-on-white. Each
+   `var(--vscode-...)` carries a sensible fallback for the same reason. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--vscode-font-family, "Segoe UI", system-ui, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--vscode-foreground, #cccccc);
+  background: var(--vscode-sideBar-background, #1e1e1e);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Toolbar ───────────────────────────────────────────────────────────── */
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  border-bottom: 1px solid var(--vscode-panel-border, transparent);
+}
+
+.search {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.search .icon {
+  position: absolute;
+  left: 6px;
+  width: 13px;
+  height: 13px;
+  pointer-events: none;
+  color: var(--vscode-input-placeholderForeground);
+}
+
+#filter {
+  width: 100%;
+  height: 26px;
+  padding: 0 26px 0 24px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  font: inherit;
+  outline: none;
+}
+
+#filter::-webkit-search-cancel-button {
+  display: none;
+}
+
+#filter:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+#clear-filter {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  cursor: pointer;
+}
+.icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.icon-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+.icon-btn:focus-visible {
+  border-color: var(--vscode-focusBorder);
+  outline: none;
+}
+
+.group-toggle {
+  display: inline-flex;
+  background: var(--vscode-input-background);
+  border-radius: 3px;
+  padding: 1px;
+  gap: 1px;
+}
+.group-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  color: var(--vscode-input-foreground);
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.group-toggle button svg {
+  width: 13px;
+  height: 13px;
+}
+.group-toggle button:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+.group-toggle button[aria-checked="true"] {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
+/* ── Tree ──────────────────────────────────────────────────────────────── */
+#tree {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  outline: none;
+}
+
+.group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A bucket header (provider or root project). Flex-wrap so the pills (live
+   counters, statuspage dot, quota windows) fall onto a second row when the
+   sidebar is narrow instead of being clipped off-screen. */
+.bucket {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  column-gap: 6px;
+  padding: 10px 10px 6px 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: calc(var(--vscode-font-size) - 1px);
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  user-select: none;
+}
+.bucket .chevron {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.12s ease;
+  color: var(--vscode-icon-foreground);
+}
+.bucket.collapsed .chevron {
+  transform: rotate(-90deg);
+}
+.bucket .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.bucket .name {
+  flex: 1 1 auto;
+  /* min-width: 0 is the flexbox trick to let an item with white-space: nowrap
+     shrink below its intrinsic width, so the ellipsis actually kicks in
+     instead of the pills being pushed off-screen. */
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--vscode-foreground);
+}
+.bucket .meta {
+  flex: 0 0 auto;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--vscode-descriptionForeground);
+}
+.bucket .status-dot {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: help;
+}
+.bucket .state-pill {
+  flex: 0 0 auto;
+  font-size: calc(var(--vscode-font-size) - 2px);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  cursor: help;
+}
+.bucket .quota {
+  flex: 0 0 auto;
+  font-size: calc(var(--vscode-font-size) - 2px);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.card .ctx-pct {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.bucket .actions {
+  display: none;
+  gap: 2px;
+}
+.bucket:hover .actions {
+  display: inline-flex;
+}
+
+/* Nested project header (cascade): same shape, half emphasis. */
+.bucket.nested {
+  text-transform: none;
+  font-weight: 500;
+  font-size: var(--vscode-font-size);
+  letter-spacing: 0;
+  padding-left: 22px;
+}
+.bucket.nested .name {
+  color: var(--vscode-foreground);
+}
+
+/* ── Session card ──────────────────────────────────────────────────────── */
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 6px 8px 6px;
+}
+
+.card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: var(--row-pad-y) var(--row-pad-x);
+  padding-left: calc(var(--row-pad-x) + var(--accent-width) + 2px);
+  border-radius: var(--card-radius);
+  cursor: pointer;
+  background: transparent;
+}
+.card::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  bottom: 4px;
+  width: var(--accent-width);
+  border-radius: 2px;
+  background: var(--card-accent, transparent);
+}
+.card:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.card.active {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+.card:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.card.dragging {
+  opacity: 0.4;
+}
+.bucket.drop-target {
+  background: color-mix(in srgb, var(--vscode-charts-blue) 18%, transparent);
+  outline: 1px dashed var(--vscode-charts-blue);
+  outline-offset: -2px;
+}
+.card .avatar {
+  grid-row: 1 / span 2;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--vscode-editor-background);
+  background: var(--avatar-bg, var(--vscode-charts-foreground));
+  position: relative;
+}
+.card .avatar.live::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--vscode-charts-green);
+  border: 2px solid var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+/* Sessions we've already opened in this VS Code window — the click focuses
+   the existing terminal instead of double-resuming. */
+.card.in-use {
+  background: color-mix(in srgb, var(--vscode-charts-blue) 10%, transparent);
+}
+.card.in-use::after {
+  content: "abierta";
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  font-size: calc(var(--vscode-font-size) - 3px);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--vscode-charts-blue);
+  color: var(--vscode-editor-background);
+  pointer-events: none;
+}
+.card.in-use:hover::after,
+.card.in-use:focus-within::after {
+  /* Hide the pill on hover so the action buttons don't overlap it. */
+  display: none;
+}
+.card .title {
+  grid-column: 2;
+  grid-row: 1;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card .meta {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: calc(var(--vscode-font-size) - 1px);
+  color: var(--vscode-descriptionForeground);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card .meta .sep {
+  opacity: 0.5;
+}
+.card .badges {
+  grid-column: 2;
+  grid-row: 2;
+  display: inline-flex;
+  gap: 3px;
+}
+.card .tag {
+  font: inherit;
+  font-size: calc(var(--vscode-font-size) - 2px);
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  cursor: pointer;
+}
+.card .tag:hover {
+  filter: brightness(1.15);
+}
+.card .star {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 14px;
+  height: 14px;
+  color: var(--vscode-charts-yellow);
+  cursor: pointer;
+  z-index: 1;
+}
+.card .star svg {
+  width: 14px;
+  height: 14px;
+}
+.card:hover .star.pinned,
+.card:focus-within .star.pinned {
+  /* Hide pinned star while hovering — the hover-action button takes its place. */
+  display: none;
+}
+.card .note-indicator {
+  position: absolute;
+  top: 6px;
+  right: 22px;
+  width: 12px;
+  height: 12px;
+  color: var(--vscode-descriptionForeground);
+  pointer-events: none;
+}
+.card .note-indicator svg {
+  width: 12px;
+  height: 12px;
+}
+.card:hover .note-indicator,
+.card:focus-within .note-indicator {
+  display: none;
+}
+
+.card .actions {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  display: none;
+  gap: 2px;
+}
+.card:hover .actions,
+.card:focus-within .actions {
+  display: inline-flex;
+}
+.card .actions button {
+  width: 22px;
+  height: 22px;
+}
+
+/* ── Filter header banner ─────────────────────────────────────────────── */
+.filter-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 8px;
+  padding: 6px 10px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-editorWidget-border, transparent);
+  border-radius: 3px;
+  font-size: calc(var(--vscode-font-size) - 1px);
+  cursor: pointer;
+}
+.filter-banner .count {
+  color: var(--vscode-descriptionForeground);
+  margin-left: auto;
+}
+
+.cost-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--vscode-charts-red) 18%, transparent);
+  border: 1px solid var(--vscode-charts-red);
+  border-radius: 3px;
+  font-size: calc(var(--vscode-font-size) - 1px);
+}
+.cost-alert strong {
+  color: var(--vscode-charts-red);
+}
+.cost-alert span {
+  flex: 1 1 auto;
+}
+
+/* ── Stats dashboard ──────────────────────────────────────────────────── */
+.stats {
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+.stats-title {
+  margin: 18px 0 8px 0;
+  font-size: calc(var(--vscode-font-size) - 1px);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 8px;
+}
+.kpi {
+  padding: 10px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-editorWidget-border, transparent);
+  border-radius: 4px;
+}
+.kpi-value {
+  font-size: 1.4em;
+  font-weight: 600;
+}
+.kpi-label {
+  font-size: calc(var(--vscode-font-size) - 1px);
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.kpi-sub {
+  margin-top: 2px;
+  font-size: calc(var(--vscode-font-size) - 2px);
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.85;
+}
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bar-row {
+  display: grid;
+  grid-template-columns: 1fr 60px;
+  grid-template-rows: auto auto;
+  gap: 2px 8px;
+  align-items: center;
+}
+.bar-head {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.bar-label {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bar-sub {
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: calc(var(--vscode-font-size) - 2px);
+}
+.bar-track {
+  grid-column: 1;
+  grid-row: 2;
+  height: 6px;
+  background: var(--vscode-progressBar-background, var(--vscode-input-background));
+  border-radius: 3px;
+  overflow: hidden;
+  opacity: 0.45;
+}
+.bar-fill {
+  height: 100%;
+  transition: width 0.2s ease;
+}
+.bar-tail {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.bar-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.bar-extra {
+  font-size: calc(var(--vscode-font-size) - 2px);
+  color: var(--vscode-descriptionForeground);
+}
+.sparkline-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sparkline {
+  width: 100%;
+}
+.spark {
+  width: 100%;
+  height: 60px;
+}
+.spark-summary {
+  display: flex;
+  justify-content: space-between;
+  color: var(--vscode-descriptionForeground);
+  font-size: calc(var(--vscode-font-size) - 1px);
+}
+.stats-empty {
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  padding: 32px 16px;
+}
+.icon-btn.active {
+  background: var(--vscode-toolbar-activeBackground, var(--vscode-list-activeSelectionBackground));
+}
+
+/* ── Empty state ───────────────────────────────────────────────────────── */
+.empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+}
+.empty .hint {
+  font-size: calc(var(--vscode-font-size) - 1px);
+  opacity: 0.85;
+}
+.empty .primary {
+  margin-top: 12px;
+  padding: 4px 12px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.empty .primary:hover {
+  background: var(--vscode-button-hoverBackground);
+}

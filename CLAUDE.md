@@ -51,7 +51,9 @@ aterm/                         # workspace Cargo
 │               ├── render.rs  #   grid de celdas → egui (EL GRUESO)
 │               └── input.rs   #   tecla → bytes de escape · mouse_report SGR/X10
 └── vscode-extension/          # 2ª UI: extensión de VS Code (TypeScript)
-    └── src/extension.ts       #   TreeView + reanudar en terminal integrado
+    ├── src/extension.ts       #   WebviewView provider + reanudar en terminal + metadata
+    ├── media/webview/         #   index.html + main.css + main.js (UI del panel)
+    └── scripts/build-vsix.sh  #   build por target → bundle del sidecar dentro del .vsix
 ```
 
 **Segunda vía de UI (VS Code).** El mismo core `agent-sessions` alimenta dos
@@ -59,8 +61,12 @@ frontends: la app nativa `aterm` y una **extensión de VS Code**. En el editor e
 terminal ya lo pone VS Code (`window.createTerminal`), así que la extensión solo
 porta la *mitad gestor de sesiones*: un `TreeDataProvider` que llama al sidecar
 `agent-sessions-cli` (JSON por stdout) y reanuda con el `resumeArgv` del proveedor.
-El sidecar es read-only y deriva rutas del `$HOME` (misma propiedad que el core).
-Pendiente para distribución: empaquetar el binario sidecar por plataforma en el `.vsix`.
+El sidecar es read-only **para sesiones** (rutas derivadas del `$HOME`); sí
+escribe en `~/.config/aterm/session-metadata.json` y en `~/.claude/projects/**`
+al importar — los mismos sitios que la app nativa, así ambas UIs comparten
+metadata y export/import. Distribución: `scripts/build-vsix.sh [<vsce-target>]`
+construye el sidecar para esa plataforma y lo empaqueta en el `.vsix` bajo
+`bin/<rust-triple>/`. La extensión auto-resuelve esa ruta en runtime.
 
 **Reparto de superficie** (lo importante de entender):
 - `alacritty_terminal` (dep) → modelo VT + PTY + parser + **read-loop en thread**. Gratis.
@@ -69,7 +75,7 @@ Pendiente para distribución: empaquetar el binario sidecar por plataforma en el
 - **Tú escribes**: `render.rs` (~300-500 LoC), `input.rs` (~200-400), chrome/tabs
   (~600-1000), wiring (~200). Total nuevo MVP: **~1.5k-2.5k LoC**.
 
-## Estado actual (2026-06-11)
+## Estado actual (2026-06-14)
 
 - ✅ **Operativo (Fases 1-4)**: `cargo run -p aterm` abre la ventana nativa con el
   panel de sesiones a la izquierda, una barra de pestañas de terminales arriba y
@@ -113,9 +119,37 @@ Pendiente para distribución: empaquetar el binario sidecar por plataforma en el
   Claude a otro proyecto), auto-refresco cada 120s.
 - ✅ **Ajustes** (`settings.rs`, ⚙): fuentes UI/terminal, proveedores a escanear,
   auto-cierre al exit, comando/dir de shell, cadencia de refresco, consulta de estado.
+- ✅ **Extensión de VS Code (WebviewView)**: panel HTML/CSS/JS con **cards** a
+  altura real (avatar de proveedor, dos líneas, acento lateral del color de
+  proyecto, acciones al hover), no un TreeView. Filtro (con predicado `#tag`
+  por click en badge), agrupado proveedor/proyecto/cascada/**fecha** (setting
+  `agentSessions.groupBy`), metadata de sesión (rename/tags/color/**notas/
+  favorito**), proyectos con alias y color, modelo visible, **quota del
+  proveedor** como pill en el header, **borrar sesión** con confirmación y
+  force-retry, **drag & drop** de Claude entre proyectos, **indicador
+  "abierta"** que enfoca el terminal en vez de duplicar, **dashboard** de
+  estadísticas (KPIs, barras por proveedor / top proyectos, sparkline 30d),
+  export/import `.zip`. Estado UI (colapsado, filtro, scroll, dashboard
+  on/off) persistido vía `vscode.setState`. Toda la persistencia comparte
+  ficheros con la app nativa (`~/.config/aterm/{session-metadata.json,
+  project-names.json}`). Sidecar empaquetado dentro del `.vsix` por plataforma
+  vía `scripts/build-vsix.sh`. Comandos del sidecar: `scan`, `providers`,
+  `preview`, `resume-argv`, `new-argv`, `metadata-{get,set,clear}`,
+  `projects-{get,set,clear}`, `export`, `import`, `delete`, `move`, `serve`
+  (MCP).
+- ✅ **MCP server** (`agent-sessions-cli serve`, JSON-RPC sobre stdio,
+  protocolo 2024-11-05): expone tools `list_sessions`, `get_session_turns`,
+  `search_sessions` al propio agente — Claude/Codex/etc. pueden buscar en su
+  historial sin que el usuario tenga que pegárselo.
+- ✅ **Orquestación paralela con worktrees** (extensión, comandos
+  `agentSessions.launchParallel` y `…cleanupWorktrees`): selección de N
+  agentes + prompt → un `git worktree` por agente + terminal por worktree con
+  el mismo prompt pegado. Es la feature killer de JetBrains Air, en OSS y en
+  cualquier carpeta git.
 - ⏳ **Fase 5 (render GPU)**: no hecha por diseño — opcional, solo si el throughput
   lo justifica (ver roadmap).
-- ⏳ **Pendientes menores**: import solo a Claude (el `.zip` es formato Claude).
+- ⏳ **Pendientes menores**: import solo a Claude (el `.zip` es formato Claude);
+  borrar sesión y filtro por tag en la extensión.
 
 ## Roadmap (fases)
 
