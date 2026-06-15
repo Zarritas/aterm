@@ -83,6 +83,11 @@ que usa la app nativa, así ambas UIs ven la misma metadata.
 - ✅ **Modo compacto** (toggle de densidad en la barra) para ver más sesiones.
 - ✅ **Plantillas con etiquetas y cwd**: al guardar pides tags y directorio; al
   lanzar, pregunta el cwd si la plantilla no lo fija.
+- ✅ **Búsqueda en contenido dentro del panel**: el botón 🔍 junto al filtro usa
+  el texto como query (FTS) y muestra los resultados como cards con el fragmento
+  resaltado; clic = reanudar.
+- ✅ **Configurar MCP con un clic** (`Agent Sessions: Configurar servidor MCP…`):
+  escribe `.vscode/mcp.json` o copia el snippet `mcpServers` para Claude Code/Cursor.
 
 ## Instalar
 

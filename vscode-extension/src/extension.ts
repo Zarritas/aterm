@@ -725,6 +725,21 @@ class SessionsView implements vscode.WebviewViewProvider {
         if (s) await toggleFavorite(this, s);
         return;
       }
+      case "searchContent": {
+        const q = String(msg.query || "").trim();
+        if (!q || !this.view) return;
+        let hits: ContentHit[] = [];
+        try {
+          hits = (await runCli<ContentHit[]>(["search-content", q])) || [];
+        } catch (e) {
+          vscode.window.showErrorMessage(
+            `Agent Sessions: búsqueda falló (${(e as Error).message}).`
+          );
+          return;
+        }
+        this.view.webview.postMessage({ type: "searchResults", query: q, hits });
+        return;
+      }
     }
   }
 
@@ -2481,6 +2496,87 @@ function registerTerminalProfiles(context: vscode.ExtensionContext): void {
   }
 }
 
+// ── MCP autoconfig ─────────────────────────────────────────────────────────
+
+/** Register the sidecar's MCP server (`agent-sessions-cli serve`) so an agent
+ *  can query the user's own session history. Writes the VS Code workspace
+ *  `.vscode/mcp.json`, or copies a generic `mcpServers` snippet for other
+ *  tools (Claude Code, Cursor, …). */
+async function configureMcp(): Promise<void> {
+  const entry = { command: cliPath(), args: ["serve"] };
+  const choice = await vscode.window.showQuickPick(
+    [
+      {
+        label: "$(file-code) Escribir en .vscode/mcp.json (este workspace)",
+        detail: "VS Code / Copilot agent mode",
+        action: "vscode",
+      },
+      {
+        label: "$(clippy) Copiar configuración al portapapeles",
+        detail: "Para Claude Code, Cursor u otros (formato mcpServers)",
+        action: "clipboard",
+      },
+    ],
+    { placeHolder: "Registrar el servidor MCP de Agent Sessions" }
+  );
+  if (!choice) return;
+
+  if (choice.action === "clipboard") {
+    const snippet = JSON.stringify(
+      { mcpServers: { "agent-sessions": entry } },
+      null,
+      2
+    );
+    await vscode.env.clipboard.writeText(snippet);
+    vscode.window.showInformationMessage(
+      "Agent Sessions: configuración MCP copiada al portapapeles."
+    );
+    return;
+  }
+
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    vscode.window.showWarningMessage(
+      "Agent Sessions: abre una carpeta para escribir .vscode/mcp.json."
+    );
+    return;
+  }
+  const dir = path.join(folder.uri.fsPath, ".vscode");
+  const file = path.join(dir, "mcp.json");
+  // Merge into an existing config rather than clobbering the user's servers.
+  let json: { servers?: Record<string, unknown> } = {};
+  try {
+    if (fs.existsSync(file)) json = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    vscode.window.showWarningMessage(
+      "Agent Sessions: .vscode/mcp.json no es JSON válido; se reescribe con solo el servidor de Agent Sessions."
+    );
+    json = {};
+  }
+  // Normalise: a non-object root (array/primitive/null) can't hold `servers`.
+  if (typeof json !== "object" || json === null || Array.isArray(json)) json = {};
+  if (
+    !json.servers ||
+    typeof json.servers !== "object" ||
+    Array.isArray(json.servers)
+  )
+    json.servers = {};
+  json.servers["agent-sessions"] = entry;
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(file, JSON.stringify(json, null, 2) + "\n", "utf8");
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+    await vscode.window.showTextDocument(doc);
+    vscode.window.showInformationMessage(
+      "Agent Sessions: servidor MCP añadido a .vscode/mcp.json. Arráncalo desde el propio fichero (botón ▶ Start)."
+    );
+  } catch (e) {
+    vscode.window.showErrorMessage(
+      `Agent Sessions: no se pudo escribir mcp.json (${(e as Error).message}).`
+    );
+  }
+}
+
 // ── Activation ───────────────────────────────────────────────────────────────
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -2529,6 +2625,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentSessions.quickActions", () =>
       quickActions(view)
     ),
+    vscode.commands.registerCommand("agentSessions.configureMcp", configureMcp),
     vscode.commands.registerCommand("agentSessions.setFilter", () => setFilter(view)),
     vscode.commands.registerCommand("agentSessions.clearFilter", () => {
       (view as any).filter = "";

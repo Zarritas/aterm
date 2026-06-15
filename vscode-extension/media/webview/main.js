@@ -41,6 +41,10 @@ try {
     filter: "",
     home: "",
     costAlertDaily: 0,
+    // Webview-local (not pushed by the extension): full-text content search
+    // results. When set ({query, hits}), the panel shows results instead of
+    // the session tree.
+    search: null,
   };
   /** Persisted UI-only state: collapsed buckets (by key), dashboard toggle. */
   let ui = vscode.getState() || { collapsed: {}, showStats: false };
@@ -280,6 +284,92 @@ try {
     }
   }
 
+  function clearSearch() {
+    state.search = null;
+    render();
+  }
+
+  /** Wrap case-insensitive matches of `query` in <mark>, escaping HTML per
+   *  segment. Matching runs on the RAW text (not the escaped form) so neither
+   *  the query nor the snippet's `& < > "` corrupt the output. */
+  function highlight(text, query) {
+    const src = text || "";
+    if (!query) return escapeHtml(src);
+    const q = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let re;
+    try {
+      re = new RegExp(q, "gi");
+    } catch (_) {
+      return escapeHtml(src);
+    }
+    let out = "";
+    let last = 0;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      out += escapeHtml(src.slice(last, m.index));
+      out += `<mark>${escapeHtml(m[0])}</mark>`;
+      last = m.index + m[0].length;
+      if (m.index === re.lastIndex) re.lastIndex++; // guard against zero-width matches
+    }
+    out += escapeHtml(src.slice(last));
+    return out;
+  }
+
+  function searchHitCard(h, query) {
+    const card = el("div", {
+      class: "search-hit",
+      title: "Reanudar esta sesión",
+      onClick: () => post("resume", { provider: h.provider, id: h.id }),
+    });
+    const head = el("span", { class: "hit-head" });
+    head.appendChild(
+      el("span", {
+        class: "avatar",
+        style: {
+          background:
+            PROVIDER_AVATAR[h.provider] || "var(--vscode-charts-foreground)",
+        },
+        text: PROVIDER_INITIAL[h.provider] || "?",
+      })
+    );
+    head.appendChild(
+      el("span", { class: "hit-title", text: h.title || h.id.slice(0, 8) })
+    );
+    head.appendChild(el("span", { class: "hit-prov", text: h.provider }));
+    card.appendChild(head);
+    card.appendChild(
+      el("div", { class: "snippet", html: highlight(h.snippet, query) })
+    );
+    return card;
+  }
+
+  /** Render content-search results in place of the session tree. */
+  function renderSearchResults() {
+    const { query, hits } = state.search;
+    root.innerHTML = "";
+    root.appendChild(
+      el("div", {
+        class: "filter-banner",
+        onClick: () => clearSearch(),
+        html: `<span>Contenido: <strong>${escapeHtml(query)}</strong></span>
+               <span class="count">${hits.length} resultado(s) · clic para salir</span>`,
+      })
+    );
+    if (hits.length === 0) {
+      root.appendChild(
+        el("p", {
+          class: "hint",
+          style: { padding: "12px 16px" },
+          text: `Sin coincidencias para "${query}".`,
+        })
+      );
+      return;
+    }
+    const list = el("div", { class: "cards" });
+    for (const h of hits) list.appendChild(searchHitCard(h, query));
+    root.appendChild(list);
+  }
+
   function doRender() {
     // Stats view replaces the tree when toggled on.
     if (ui.showStats) {
@@ -287,6 +377,14 @@ try {
       emptyView.hidden = true;
       statsView.hidden = false;
       renderStats();
+      return;
+    }
+    // Content-search results replace the tree until cleared.
+    if (state.search) {
+      root.hidden = false;
+      emptyView.hidden = true;
+      statsView.hidden = true;
+      renderSearchResults();
       return;
     }
     root.hidden = false;
@@ -1352,12 +1450,25 @@ try {
     filterDebounce = window.setTimeout(() => {
       state.filter = value;
       clearBtn.hidden = value.length === 0;
+      // Typing a normal filter exits content-search mode.
+      state.search = null;
       updateQuickFilters();
       render();
       post("filterChanged", { value });
     }, 120);
   });
   clearBtn.addEventListener("click", () => applyFilter(""));
+
+  // Full-text content search: uses whatever is in the filter box as the query
+  // and renders hits in-panel (see renderSearchResults).
+  document.getElementById("action-fts").addEventListener("click", () => {
+    const q = filterInput.value.trim();
+    if (!q) {
+      filterInput.focus();
+      return;
+    }
+    post("searchContent", { query: q });
+  });
 
   document.querySelectorAll(".group-toggle button").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1388,6 +1499,7 @@ try {
   updateStatsBtn();
   statsBtn.addEventListener("click", () => {
     ui.showStats = !ui.showStats;
+    if (ui.showStats) state.search = null; // leave content-search when opening stats
     vscode.setState(ui);
     updateStatsBtn();
     render();
@@ -1458,6 +1570,15 @@ try {
         filter: state.filter,
         showStats: !!ui.showStats,
       });
+      render();
+    } else if (msg.type === "searchResults") {
+      // Search and stats are mutually-exclusive top views.
+      if (ui.showStats) {
+        ui.showStats = false;
+        vscode.setState(ui);
+        updateStatsBtn();
+      }
+      state.search = { query: msg.query, hits: msg.hits || [] };
       render();
     }
   });

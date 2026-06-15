@@ -156,6 +156,12 @@
         "title": "Acciones rápidas de sesión…",
         "category": "Agent Sessions",
         "icon": "$(list-selection)"
+      },
+      {
+        "command": "agentSessions.configureMcp",
+        "title": "Configurar servidor MCP…",
+        "category": "Agent Sessions",
+        "icon": "$(server-process)"
       }
     ],
     "keybindings": [

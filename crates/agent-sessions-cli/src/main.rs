@@ -554,8 +554,22 @@ fn search_content_cmd(query: Option<&String>) {
             let Some(text) = p.fts_content(&s.id) else { continue };
             let lo = text.to_lowercase();
             if let Some(pos) = lo.find(&needle) {
-                let start = pos.saturating_sub(60);
-                let end = (pos + needle.len() + 100).min(text.len());
+                // `pos` indexes the lowercased string, whose byte length can
+                // differ from `text`; clamp every offset to `text` length AND
+                // to a char boundary so a multibyte char (acentos, emojis)
+                // can't trigger a slice-on-non-boundary panic.
+                let len = text.len();
+                let mut start = pos.saturating_sub(60).min(len);
+                let mut end = (pos + needle.len() + 100).min(len);
+                while start > 0 && !text.is_char_boundary(start) {
+                    start -= 1;
+                }
+                while end < len && !text.is_char_boundary(end) {
+                    end += 1;
+                }
+                if start > end {
+                    start = end;
+                }
                 let snippet = text[start..end].replace('\n', " ");
                 hits.push(serde_json::json!({
                     "provider": s.provider,
