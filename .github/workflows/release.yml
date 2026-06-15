@@ -24,14 +24,16 @@ jobs:
   # ── Debian packages (.deb) ──────────────────────────────────────────────
   build-deb:
     name: deb · ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
             arch: amd64
-          - target: aarch64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
             arch: arm64
     steps:
       - uses: actions/checkout@v4
@@ -54,36 +56,6 @@ jobs:
             libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
             libgl1-mesa-dev libfontconfig1-dev libxkbcommon-x11-dev \
             libssl-dev
-
-      - name: Cross-compile toolchain (arm64 only)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo dpkg --add-architecture arm64
-          # Restrict the existing sources to amd64 only so apt doesn't try
-          # to fetch arm64 from archive.ubuntu.com (which is amd64/i386 only)
-          # and replace them with the ports mirror for arm64.
-          sudo sed -i 's|^deb |deb [arch=amd64,i386] |g' /etc/apt/sources.list
-          sudo tee /etc/apt/sources.list.d/arm64.list > /dev/null <<'EOF'
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble main universe
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble-updates main universe
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble-security main universe
-          EOF
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libxkbcommon-dev:arm64 libwayland-dev:arm64 \
-            libxcb1-dev:arm64 libgl1-mesa-dev:arm64 libfontconfig1-dev:arm64 \
-            libxkbcommon-x11-dev:arm64 libssl-dev:arm64
-          mkdir -p ~/.cargo
-          cat >> ~/.cargo/config.toml <<'EOF'
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
-          {
-            echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
-            echo "PKG_CONFIG_ALLOW_CROSS=1"
-            echo "PKG_CONFIG_SYSROOT_DIR=/"
-          } >> "$GITHUB_ENV"
 
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
@@ -122,13 +94,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             vsce: linux-x64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             vsce: linux-arm64
-          - os: macos-13
+          # darwin-x64 cross-compila desde Apple Silicon (macos-14); los runners
+          # macos-13 Intel escasean y se quedan colgados en cola.
+          - os: macos-14
             target: x86_64-apple-darwin
             vsce: darwin-x64
           - os: macos-14
@@ -152,17 +126,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: vsix-${{ matrix.vsce }}
-
-      - name: Cross-compile toolchain (linux-arm64 only)
-        if: matrix.vsce == 'linux-arm64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          mkdir -p ~/.cargo
-          cat >> ~/.cargo/config.toml <<'EOF'
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
 
       - name: npm install
         working-directory: vscode-extension
