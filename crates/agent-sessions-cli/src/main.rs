@@ -55,6 +55,7 @@ fn main() {
         "preview" => preview(args.get(1), args.get(2)),
         "resume-argv" => argv_cmd(args.get(1), args.get(2), false),
         "new-argv" => argv_cmd(args.get(1), None, true),
+        "compact-argv" => compact_argv_cmd(args.get(1), args.get(2)),
         "metadata-get" => metadata_get(),
         "metadata-set" => metadata_set(args.get(1), args.get(2)),
         "metadata-clear" => metadata_clear(args.get(1), args.get(2)),
@@ -76,9 +77,10 @@ fn main() {
         "templates-delete" => templates_delete(args.get(1)),
         other => fail(&format!(
             "comando desconocido: {other:?}\nuso: agent-sessions-cli \
-             <scan|providers|preview|resume-argv|new-argv|metadata-get|\
+             <scan|providers|preview|resume-argv|new-argv|compact-argv|metadata-get|\
              metadata-set|metadata-clear|projects-get|projects-set|projects-clear|\
-             export|import|delete|move|serve|backup|restore> [args]"
+             export|import|delete|move|serve|backup|restore|service-status|live|\
+             search-content|templates-get|templates-set|templates-delete> [args]"
         )),
     }
 }
@@ -155,6 +157,22 @@ fn argv_cmd(provider: Option<&String>, id: Option<&String>, new: bool) {
         }
     };
     emit(&serde_json::json!(argv));
+}
+
+/// `compact-argv <provider> <id>` → argv that compacts the session's context
+/// without a full resume (e.g. `["claude","--resume",id,"-p","/compact"]`), or
+/// JSON `null` when the provider doesn't support out-of-band compaction.
+fn compact_argv_cmd(provider: Option<&String>, id: Option<&String>) {
+    let Some(p) = find(provider) else {
+        fail("proveedor requerido");
+    };
+    let Some(id) = id else {
+        fail("uso: compact-argv <provider> <session-id>");
+    };
+    match p.compact_argv(id) {
+        Some(argv) => emit(&serde_json::json!(argv)),
+        None => emit(&serde_json::Value::Null),
+    }
 }
 
 /// Whole store as a flat `{ "<provider>:<id>": { ... } }` object. Empty entries

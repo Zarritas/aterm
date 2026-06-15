@@ -36,7 +36,7 @@ aterm/                         # workspace Cargo
 │   ├── agent-sessions/        # VENDOR verbatim de warp_agent_history (read-only)
 │   │   └── src/{providers/*, extract, live, metadata, transfer, provider, types}
 │   ├── agent-sessions-cli/    # sidecar: envuelve el core y emite JSON por stdout
-│   │   └── src/main.rs        #   scan/preview/resume-argv/new-argv/providers
+│   │   └── src/main.rs        #   scan/preview/resume-argv/new-argv/compact-argv/providers
 │   └── aterm/                 # la app
 │       └── src/
 │           ├── main.rs        # entrada: instala fuentes/tema y lanza AtermApp
@@ -122,21 +122,37 @@ construye el sidecar para esa plataforma y lo empaqueta en el `.vsix` bajo
 - ✅ **Extensión de VS Code (WebviewView)**: panel HTML/CSS/JS con **cards** a
   altura real (avatar de proveedor, dos líneas, acento lateral del color de
   proyecto, acciones al hover), no un TreeView. Filtro (con predicado `#tag`
-  por click en badge), agrupado proveedor/proyecto/cascada/**fecha** (setting
+  por click en badge) + **botones rápidos** en el header: «solo activos»
+  (toggle `active:true`) y «por etiqueta» (popover con las tags en uso y su
+  conteo, multi-selección que compone `#tag`). **Catálogo de tags** (setting
+  `agentSessions.tagCatalog` + comando «Gestionar catálogo de etiquetas»): al
+  asignar tags a una sesión se ofrece un QuickPick marcable de las predefinidas
+  + usadas, en vez de escribirlas (con fallback a texto libre y «nueva
+  etiqueta…»). Agrupado proveedor/proyecto/cascada/**fecha** (setting
   `agentSessions.groupBy`), metadata de sesión (rename/tags/color/**notas/
   favorito**), proyectos con alias y color, modelo visible, **quota del
   proveedor** como pill en el header, **borrar sesión** con confirmación y
   force-retry, **drag & drop** de Claude entre proyectos, **indicador
   "abierta"** que enfoca el terminal en vez de duplicar, **dashboard** de
   estadísticas (KPIs, barras por proveedor / top proyectos, sparkline 30d),
-  export/import `.zip`. Estado UI (colapsado, filtro, scroll, dashboard
-  on/off) persistido vía `vscode.setState`. Toda la persistencia comparte
-  ficheros con la app nativa (`~/.config/aterm/{session-metadata.json,
-  project-names.json}`). Sidecar empaquetado dentro del `.vsix` por plataforma
-  vía `scripts/build-vsix.sh`. Comandos del sidecar: `scan`, `providers`,
-  `preview`, `resume-argv`, `new-argv`, `metadata-{get,set,clear}`,
-  `projects-{get,set,clear}`, `export`, `import`, `delete`, `move`, `serve`
-  (MCP).
+  export/import `.zip`. **Paridad con la app nativa** (2026-06-15): **compactar
+  contexto** (acción »« en el menú contextual, solo Claude, vía `compact-argv`),
+  **nueva sesión eligiendo cwd** (workspace / cwd conocido del proveedor con
+  alias / otra ruta vía showOpenDialog; + acciones rápidas «nueva sesión aquí» y
+  «abrir terminal aquí» en cada cabecera de bucket de proyecto), **plegar/desplegar
+  todo** (botón en la barra), y tres settings: `scanProviders` (proveedores visibles, filtrado en
+  display; el escaneo sigue), `fetchStatus` (interruptor de red para
+  statuspage+quota, default on, paridad con `fetch_status` nativo) y `refreshSec`
+  (auto-rescan completo periódico, 0 = off, <15 → 15). Estado UI (colapsado,
+  filtro, scroll, dashboard on/off) persistido vía `vscode.setState`. Toda la
+  persistencia comparte ficheros con la app nativa
+  (`~/.config/aterm/{session-metadata.json, project-names.json}`). Sidecar
+  empaquetado dentro del `.vsix` por plataforma vía `scripts/build-vsix.sh`.
+  Comandos del sidecar: `scan`, `providers`, `preview`, `resume-argv`,
+  `new-argv`, `compact-argv`, `metadata-{get,set,clear}`,
+  `projects-{get,set,clear}`, `export`, `import`, `delete`, `move`, `backup`,
+  `restore`, `service-status`, `live`, `search-content`, `templates-{get,set,delete}`,
+  `serve` (MCP).
 - ✅ **MCP server** (`agent-sessions-cli serve`, JSON-RPC sobre stdio,
   protocolo 2024-11-05): expone tools `list_sessions`, `get_session_turns`,
   `search_sessions` al propio agente — Claude/Codex/etc. pueden buscar en su
@@ -211,6 +227,9 @@ cargo build --release         # binario optimizado (lto thin)
 ## Sincronizar el vendor con upstream
 
 `agent-sessions` es copia verbatim de `../warp/crates/warp_agent_history/src/`.
-Si mejoras la lógica de sesiones allí (o al revés), re-copia y re-aplica la única
-divergencia: quitar `pub mod service_status;` de `lib.rs`. La interop de export/import
+Si mejoras la lógica de sesiones allí (o al revés), re-copia y re-aplica las dos
+divergencias: (1) quitar `pub mod service_status;` de `lib.rs`; (2) declarar
+`windows-sys` como dep `[target.'cfg(windows)'.dependencies]` en `Cargo.toml`
+(la usa `live.rs::pid_alive`; upstream la hereda del workspace de Warp y al
+vendorizar se pierde → rompe el build de Windows). La interop de export/import
 es **byte-compatible** con multi-claude y el panel de Terax — no romper el manifest.

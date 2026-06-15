@@ -142,6 +142,12 @@
         "command": "agentSessions.manageTemplates",
         "title": "Gestionar plantillas…",
         "category": "Agent Sessions"
+      },
+      {
+        "command": "agentSessions.manageTagCatalog",
+        "title": "Gestionar catálogo de etiquetas…",
+        "category": "Agent Sessions",
+        "icon": "$(tag)"
       }
     ],
     "menus": {
@@ -208,6 +214,34 @@
           "default": 0,
           "minimum": 0,
           "description": "Umbral diario de gasto en USD. Si el coste total de las sesiones cuya última actividad fue hoy lo supera, el panel muestra una alerta. 0 desactiva la alerta."
+        },
+        "agentSessions.scanProviders": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["claude", "codex", "opencode", "gemini"]
+          },
+          "uniqueItems": true,
+          "default": ["claude", "codex", "opencode", "gemini"],
+          "description": "Proveedores visibles en el panel. Filtro de visualización: el sidecar sigue escaneando el disco, pero las sesiones de un proveedor no marcado se ocultan (y no cuentan en los contadores ni en el coste). Lista vacía = se muestran todos."
+        },
+        "agentSessions.fetchStatus": {
+          "type": "boolean",
+          "default": true,
+          "description": "Consultar por red el estado del servicio (statuspage de Claude/OpenAI) y mostrar la cuota del proveedor. Desactívalo para trabajar sin tráfico de red."
+        },
+        "agentSessions.refreshSec": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Cada cuántos segundos re-escanear el disco completo para detectar sesiones nuevas y cambios de coste/contexto/modelo. 0 desactiva el auto-refresco completo; valores entre 1 y 14 se ajustan a 15."
+        },
+        "agentSessions.tagCatalog": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Catálogo de etiquetas predefinidas. Aparecen como opciones marcables al asignar etiquetas a una sesión, para no tener que escribirlas a mano. Gestiónalo con el comando «Agent Sessions: Gestionar catálogo de etiquetas» o editando esta lista directamente."
         },
         "agentSessions.groupBy": {
           "type": "string",

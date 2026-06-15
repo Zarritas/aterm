@@ -209,6 +209,11 @@ class SessionsView implements vscode.WebviewViewProvider {
    *  (busy→idle = needs input, alive→gone = finished). */
   private prevLive = new Map<string, string>();
   private pollTimer: NodeJS.Timeout | null = null;
+  /** Full re-scan timer (separate from the cheap live poll). Picks up brand
+   *  new sessions and cost/context/model changes the live poll can't see. */
+  private refreshTimer: NodeJS.Timeout | null = null;
+  /** Re-entrancy guard for refresh() so the timer can't stack scans. */
+  private refreshing = false;
   /** Permanent status-bar widget. Shows live counts + today's spend so the
    *  user keeps an eye on Agent Sessions even when the panel is hidden. */
   private statusItem: vscode.StatusBarItem | null = null;
@@ -238,19 +243,40 @@ class SessionsView implements vscode.WebviewViewProvider {
         }
       })
     );
-    // Recurring live-status poll. Re-armed when settings change.
+    // Recurring live-status poll + full re-scan. Both re-armed on settings change.
     this.armPoll();
+    this.armRefresh();
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration("agentSessions.pollIntervalSec")) {
           this.armPoll();
         }
+        if (e.affectsConfiguration("agentSessions.refreshSec")) {
+          this.armRefresh();
+        }
+        // Display-only toggles: no re-scan needed, just re-push the filtered view.
+        if (
+          e.affectsConfiguration("agentSessions.scanProviders") ||
+          e.affectsConfiguration("agentSessions.fetchStatus")
+        ) {
+          // fetchStatus turning on should also kick a status fetch.
+          if (
+            e.affectsConfiguration("agentSessions.fetchStatus") &&
+            vscode.workspace
+              .getConfiguration("agentSessions")
+              .get<boolean>("fetchStatus", true)
+          ) {
+            void this.refreshServiceStatus();
+          }
+          this.push();
+        }
       })
     );
-    // Stop the timer if the extension goes away (host shutdown).
+    // Stop the timers if the extension goes away (host shutdown).
     context.subscriptions.push({
       dispose: () => {
         if (this.pollTimer) clearInterval(this.pollTimer);
+        if (this.refreshTimer) clearInterval(this.refreshTimer);
       },
     });
   }
@@ -265,6 +291,21 @@ class SessionsView implements vscode.WebviewViewProvider {
         .get<number>("pollIntervalSec", 5)
     );
     this.pollTimer = setInterval(() => void this.pollLive(), sec * 1000);
+  }
+
+  /** (Re)start the full-rescan timer. `refreshSec` of 0 disables it; 1..14 is
+   *  clamped to 15 to keep the (potentially costly) opencode scan in check. */
+  private armRefresh(): void {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    const raw = vscode.workspace
+      .getConfiguration("agentSessions")
+      .get<number>("refreshSec", 120);
+    if (!raw || raw <= 0) return; // disabled
+    const sec = Math.max(15, raw);
+    this.refreshTimer = setInterval(() => void this.refresh(), sec * 1000);
   }
 
   /** Cheap live-registry poll. Updates the cached scan's `isActive` /
@@ -342,11 +383,14 @@ class SessionsView implements vscode.WebviewViewProvider {
    *  red if the daily-cost alert tripped. */
   private updateStatusBar(): void {
     if (!this.statusItem) return;
+    // Respect the per-provider visibility gate so a hidden provider doesn't
+    // contribute to the global counters/spend either.
+    const enabled = this.enabledProviders();
     let active = 0;
     let busy = 0;
     let idle = 0;
     for (const s of this.scan.sessions) {
-      if (!s.isActive) continue;
+      if (!enabled.has(s.provider) || !s.isActive) continue;
       active++;
       if (s.liveStatus === "busy") busy++;
       else if (s.liveStatus === "idle") idle++;
@@ -357,6 +401,7 @@ class SessionsView implements vscode.WebviewViewProvider {
     const since = today.getTime() / 1000;
     let cost = 0;
     for (const s of this.scan.sessions) {
+      if (!enabled.has(s.provider)) continue;
       if (s.lastActivity >= since && s.costUsd) cost += s.costUsd;
     }
     const cfg = vscode.workspace.getConfiguration("agentSessions");
@@ -450,8 +495,12 @@ class SessionsView implements vscode.WebviewViewProvider {
     void this.refresh();
   }
 
-  /** Re-scan the sidecar and push the new state to the webview. */
+  /** Re-scan the sidecar and push the new state to the webview. Guarded against
+   *  re-entrancy: the periodic timer could otherwise stack a second scan on top
+   *  of a slow one (opencode shells out), racing on `this.scan`. */
   async refresh(): Promise<void> {
+    if (this.refreshing) return;
+    this.refreshing = true;
     try {
       const [scan, meta, projects] = await Promise.all([
         runCli<ScanResult>(["scan"]),
@@ -464,11 +513,17 @@ class SessionsView implements vscode.WebviewViewProvider {
     } catch (e) {
       this.scan = { providers: [], sessions: [] };
       vscode.window.showErrorMessage(`Agent Sessions: ${(e as Error).message}`);
+    } finally {
+      this.refreshing = false;
     }
     this.push();
     // Statuspage check is network-bound: fire and forget so the panel
-    // renders immediately, then re-push when the status arrives.
-    void this.refreshServiceStatus();
+    // renders immediately, then re-push when the status arrives. Skipped when
+    // the user opted out of network calls.
+    const fetchStatus = vscode.workspace
+      .getConfiguration("agentSessions")
+      .get<boolean>("fetchStatus", true);
+    if (fetchStatus) void this.refreshServiceStatus();
   }
 
   /** Pull statuspage health for the providers that publish one. Pushes a new
@@ -485,20 +540,54 @@ class SessionsView implements vscode.WebviewViewProvider {
     }
   }
 
-  /** Push current state to the webview without re-scanning. */
+  /** Providers the user wants visible (the `scanProviders` setting). The scan
+   *  always reads everything; this gate is applied at display time so toggling
+   *  it back on needs no re-scan. */
+  private enabledProviders(): Set<string> {
+    const all = ["claude", "codex", "opencode", "gemini"];
+    const raw = vscode.workspace
+      .getConfiguration("agentSessions")
+      .get<string[]>("scanProviders", all);
+    // An empty/invalid array would hide everything with no hint as to why;
+    // treat it as "all" so the panel never silently goes blank.
+    if (!Array.isArray(raw) || raw.length === 0) return new Set(all);
+    return new Set(raw);
+  }
+
+  /** Push current state to the webview without re-scanning. Honours the
+   *  per-provider visibility gate and the network opt-in. */
   push(): void {
     this.updateStatusBar();
     if (!this.view) return;
     const cfg = vscode.workspace.getConfiguration("agentSessions");
+    const enabled = this.enabledProviders();
+    const fetchStatus = cfg.get<boolean>("fetchStatus", true);
+
+    const sessions = this.scan.sessions.filter((s) => enabled.has(s.provider));
+    const providers = this.scan.providers.filter((p) => enabled.has(p.id));
+
+    // Statuspage health is network-derived; quota is read from local files but
+    // is gated by the same `fetchStatus` switch to mirror the native app
+    // (it groups both under one "consult status" toggle). Both are suppressed
+    // when off and otherwise restricted to the visible providers.
+    const quotas: Record<string, unknown> = {};
+    const serviceStatus: Record<string, ServiceStatus> = {};
+    if (fetchStatus) {
+      for (const [k, v] of Object.entries(this.scan.quotas || {}))
+        if (enabled.has(k)) quotas[k] = v;
+      for (const [k, v] of Object.entries(this.serviceStatus))
+        if (enabled.has(k)) serviceStatus[k] = v;
+    }
+
     this.view.webview.postMessage({
       type: "state",
       state: {
-        providers: this.scan.providers,
-        sessions: this.scan.sessions,
+        providers,
+        sessions,
         metadata: this.metadata,
         projects: this.projects,
-        quotas: this.scan.quotas || {},
-        serviceStatus: this.serviceStatus,
+        quotas,
+        serviceStatus,
         activeKeys: Array.from(this.activeTerminals.keys()),
         groupBy: currentGroupMode(),
         filter: this.filter,
@@ -540,6 +629,21 @@ class SessionsView implements vscode.WebviewViewProvider {
 
   metadataFor(provider: string, id: string): SessionMetadata | null {
     return this.metadata[`${provider}:${id}`] ?? null;
+  }
+  /** Distinct tags currently assigned across every session, sorted. */
+  allUsedTags(): string[] {
+    const set = new Set<string>();
+    for (const m of Object.values(this.metadata))
+      for (const t of m.tags ?? []) set.add(t);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }
+  /** How many sessions carry the given tag (case-insensitive). */
+  tagUsageCount(tag: string): number {
+    const lo = tag.toLowerCase();
+    let n = 0;
+    for (const m of Object.values(this.metadata))
+      if ((m.tags ?? []).some((t) => t.toLowerCase() === lo)) n++;
+    return n;
   }
   projectAliasFor(cwd: string): string | null {
     return this.projects.names[cwd] ?? null;
@@ -584,7 +688,15 @@ class SessionsView implements vscode.WebviewViewProvider {
         this.push();
         return;
       case "newSession":
-        return newSession();
+        return newSession(this, msg.cwd ? String(msg.cwd) : undefined);
+      case "openTerminal": {
+        if (msg.cwd) {
+          const cwd = String(msg.cwd);
+          const label = this.projectAliasFor(cwd) || path.basename(cwd) || cwd;
+          openTerminalAt(cwd, label);
+        }
+        return;
+      }
       case "import":
         return importArchive(this);
       case "resume": {
@@ -732,6 +844,13 @@ function launch(
   return terminal;
 }
 
+/** Open a plain integrated terminal (no agent) rooted at `cwd`. Lives in the
+ *  panel by default — it's a regular shell, not a full-screen agent session. */
+function openTerminalAt(cwd: string, label: string): void {
+  const terminal = vscode.window.createTerminal({ name: `▸ ${label}`, cwd });
+  terminal.show();
+}
+
 /** Resume in a terminal, but if we already opened one for this session in
  *  this VS Code window, just bring it to the front — double-resuming would
  *  put two agent processes on the same on-disk transcript and corrupt it. */
@@ -744,6 +863,45 @@ async function resumeSession(
   const name = (meta?.name?.trim() || s.title?.trim() || s.provider).slice(0, 30);
   const terminal = launch(`▶ ${name}`, s.cwd, s.resumeArgv);
   if (terminal) view.registerTerminal(s.provider, s.id, terminal);
+}
+
+/** Providers whose CLI can compact a session's context out-of-band (mirrors
+ *  the native app, which only shows the »« button for Claude). The sidecar
+ *  itself stays generic — it returns null for providers without support. */
+const COMPACT_PROVIDERS = new Set(["claude"]);
+
+/** Run the provider's context-compaction argv in a one-off terminal. Unlike
+ *  resume, this is NOT registered as an active terminal: it's a maintenance
+ *  action that ends on its own, not a live conversation. */
+async function compactSession(view: SessionsView, s: Session): Promise<void> {
+  // Compaction is itself a `--resume` over the same transcript; running it
+  // while the session is live would put two processes on one file and corrupt
+  // it — the same hazard resumeSession guards against.
+  if (view.hasActiveTerminal(s.provider, s.id) || s.isActive) {
+    vscode.window.showWarningMessage(
+      "Agent Sessions: la sesión está activa. Ciérrala antes de compactar para no corromper el historial."
+    );
+    return;
+  }
+  let argv: string[] | null;
+  try {
+    argv = await runCli<string[] | null>(["compact-argv", s.provider, s.id]);
+  } catch (e) {
+    vscode.window.showErrorMessage(`Agent Sessions: ${(e as Error).message}`);
+    return;
+  }
+  if (!argv || argv.length === 0) {
+    vscode.window.showInformationMessage(
+      `Agent Sessions: ${s.provider} no admite compactar el contexto fuera de la sesión.`
+    );
+    return;
+  }
+  const name = (
+    view.metadataFor(s.provider, s.id)?.name?.trim() ||
+    s.title?.trim() ||
+    s.provider
+  ).slice(0, 30);
+  launch(`»« ${name}`, s.cwd, argv);
 }
 
 async function preview(s: Session): Promise<void> {
@@ -1102,7 +1260,13 @@ async function smartLaunch(view: SessionsView): Promise<void> {
   launch(`✦ ${chosen.displayName}`, cwd ?? undefined, chosen.newSessionArgv);
 }
 
-async function newSession(): Promise<void> {
+/** Launch a fresh session. With `presetCwd` (e.g. the "+ nueva aquí" button on
+ *  a project bucket) the directory step is skipped and the session starts
+ *  there directly; otherwise the user picks the cwd. */
+async function newSession(
+  view: SessionsView,
+  presetCwd?: string
+): Promise<void> {
   let providers: ProviderInfo[];
   try {
     providers = await runCli<ProviderInfo[]>(["providers"]);
@@ -1119,10 +1283,79 @@ async function newSession(): Promise<void> {
   }
   const pick = await vscode.window.showQuickPick(
     usable.map((p) => ({ label: p.displayName, info: p })),
-    { placeHolder: "Proveedor para la nueva sesión" }
+    {
+      placeHolder: presetCwd
+        ? `Proveedor para la nueva sesión en ${displayPath(presetCwd)}`
+        : "Proveedor para la nueva sesión",
+    }
   );
   if (!pick) return;
-  launch(`✦ ${pick.info.displayName}`, undefined, pick.info.newSessionArgv);
+  const cwd =
+    presetCwd !== undefined ? presetCwd : await pickLaunchCwd(view, pick.info.id);
+  if (cwd === undefined) return; // cancelled
+  launch(`✦ ${pick.info.displayName}`, cwd ?? undefined, pick.info.newSessionArgv);
+}
+
+/** Pick where a new session should start: the open workspace, the provider's
+ *  default (no cwd), any directory it has been used in before (with project
+ *  alias), or a folder chosen from disk. Returns `undefined` on cancel,
+ *  `null` for "no cwd", or an absolute path. */
+async function pickLaunchCwd(
+  view: SessionsView,
+  providerId: string
+): Promise<string | null | undefined> {
+  const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+  const sessions = view.sessionsSnapshot();
+  // Known cwds for this provider, most-recently-used first.
+  const seen = new Set<string>();
+  const cwds: string[] = [];
+  for (const s of [...sessions].sort((a, b) => b.lastActivity - a.lastActivity)) {
+    if (s.provider !== providerId || !s.cwd) continue;
+    if (s.cwd === ws || seen.has(s.cwd)) continue;
+    seen.add(s.cwd);
+    cwds.push(s.cwd);
+  }
+
+  type Item = vscode.QuickPickItem & { cwd?: string | null; browse?: boolean };
+  const items: Item[] = [];
+  if (ws)
+    items.push({
+      label: "$(folder-active) Directorio del workspace",
+      description: displayPath(ws),
+      cwd: ws,
+    });
+  items.push({
+    label: "$(home) Directorio por defecto del agente",
+    description: "sin cwd",
+    cwd: null,
+  });
+  for (const c of cwds) {
+    const alias = view.projectAliasFor(c);
+    items.push({
+      label: `$(folder) ${alias ?? (path.basename(c) || c)}`,
+      description: displayPath(c),
+      cwd: c,
+    });
+  }
+  items.push({ label: "$(ellipsis) Otra ruta…", browse: true });
+
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: "¿Dónde abrir la nueva sesión?",
+    matchOnDescription: true,
+  });
+  if (!pick) return undefined;
+  if (pick.browse) {
+    const sel = await vscode.window.showOpenDialog({
+      canSelectFolders: true,
+      canSelectFiles: false,
+      canSelectMany: false,
+      openLabel: "Abrir sesión aquí",
+      defaultUri: ws ? vscode.Uri.file(ws) : undefined,
+    });
+    if (!sel || sel.length === 0) return undefined;
+    return sel[0].fsPath;
+  }
+  return pick.cwd ?? null;
 }
 
 // ── Session metadata edits ───────────────────────────────────────────────────
@@ -1159,6 +1392,8 @@ async function sessionContextMenu(view: SessionsView, s: Session): Promise<void>
     { label: "$(symbol-color) Color…", action: "color" },
     { label: "$(cloud-download) Exportar a .zip…", action: "export" },
   ];
+  if (COMPACT_PROVIDERS.has(s.provider))
+    items.push({ label: "$(fold) Compactar contexto", action: "compact" });
   if (meta) items.push({ label: "Limpiar metadata", action: "clear" });
   items.push({ label: "$(trash) Eliminar sesión…", action: "delete" });
   const pick = await vscode.window.showQuickPick(items, {
@@ -1190,6 +1425,8 @@ async function sessionContextMenu(view: SessionsView, s: Session): Promise<void>
       return resumeWithPrompt(view, s, meta);
     case "switch":
       return continueAsOtherAgent(view, s);
+    case "compact":
+      return compactSession(view, s);
   }
 }
 
@@ -1390,19 +1627,146 @@ async function renameSession(view: SessionsView, s: Session): Promise<void> {
   });
 }
 
+/** Read the predefined tag catalogue from the `agentSessions.tagCatalog`
+ *  setting, normalised (trimmed, de-duped, non-empty). */
+function tagCatalog(): string[] {
+  const raw = vscode.workspace
+    .getConfiguration("agentSessions")
+    .get<string[]>("tagCatalog", []);
+  return dedupeTags(Array.isArray(raw) ? raw : []);
+}
+
+/** Persist the catalogue back to the global setting. */
+async function setTagCatalog(tags: string[]): Promise<void> {
+  await vscode.workspace
+    .getConfiguration("agentSessions")
+    .update("tagCatalog", dedupeTags(tags), vscode.ConfigurationTarget.Global);
+}
+
+function dedupeTags(tags: string[]): string[] {
+  return tags
+    .map((t) => t.trim())
+    .filter((t, i, a) => t.length > 0 && a.indexOf(t) === i);
+}
+
+function parseTagInput(value: string): string[] {
+  return dedupeTags(value.split(/[ ,]+/));
+}
+
+/** Assign tags to a session. When a catalogue (or already-used tags) exists,
+ *  offer a multi-pick of those so the user assigns by clicking instead of
+ *  typing; "Escribir…" falls back to the free-text box, "Nueva etiqueta…"
+ *  creates one (optionally added to the catalogue). */
 async function editTags(view: SessionsView, s: Session): Promise<void> {
   const meta = view.metadataFor(s.provider, s.id);
+  const current = meta?.tags ?? [];
+  const universe = dedupeTags([...tagCatalog(), ...view.allUsedTags(), ...current]);
+
+  // No catalogue and nothing used yet → keep the original free-text flow.
+  if (universe.length === 0) {
+    return editTagsFreeText(view, s, current);
+  }
+
+  const currentSet = new Set(current);
+  const TYPE = "$(pencil) Escribir etiquetas…";
+  const ADD = "$(add) Nueva etiqueta…";
+  const items: vscode.QuickPickItem[] = [
+    { label: TYPE, alwaysShow: true },
+    { label: ADD, alwaysShow: true },
+    { label: "", kind: vscode.QuickPickItemKind.Separator },
+    ...universe.map((t) => ({
+      label: t,
+      picked: currentSet.has(t),
+      description: view.tagUsageCount(t) ? `${view.tagUsageCount(t)} sesión(es)` : undefined,
+    })),
+  ];
+
+  const picks = await vscode.window.showQuickPick(items, {
+    canPickMany: true,
+    title: `Etiquetas — ${meta?.name || s.title || s.id.slice(0, 8)}`,
+    placeHolder: "Marca las etiquetas a asignar",
+  });
+  if (picks === undefined) return; // cancelled
+
+  const labels = picks.map((p) => p.label);
+  if (labels.includes(TYPE)) {
+    // Carry any tags ticked alongside "Escribir…" into the free-text box so
+    // they aren't silently dropped when switching to manual editing.
+    const alsoTicked = labels.filter((l) => l !== TYPE && l !== ADD);
+    return editTagsFreeText(view, s, dedupeTags([...current, ...alsoTicked]));
+  }
+
+  let chosen = labels.filter((l) => l !== ADD);
+  if (labels.includes(ADD)) {
+    const fresh = await vscode.window.showInputBox({
+      title: "Nueva etiqueta",
+      prompt: "Una o varias, separadas por coma o espacio",
+    });
+    if (fresh) {
+      const added = parseTagInput(fresh);
+      chosen = dedupeTags([...chosen, ...added]);
+      // Grow the catalogue so the new tag is reusable next time.
+      await setTagCatalog([...tagCatalog(), ...added]);
+    }
+  }
+
+  await patchMetadata(view, s.provider, s.id, { tags: dedupeTags(chosen) });
+}
+
+async function editTagsFreeText(
+  view: SessionsView,
+  s: Session,
+  current: string[]
+): Promise<void> {
   const value = await vscode.window.showInputBox({
     title: "Etiquetas",
     prompt: "Separadas por coma o espacio (vacío para limpiar)",
-    value: (meta?.tags ?? []).join(", "),
+    value: current.join(", "),
   });
   if (value === undefined) return;
-  const tags = value
-    .split(/[ ,]+/)
-    .map((t) => t.trim())
-    .filter((t, i, a) => t.length > 0 && a.indexOf(t) === i);
-  await patchMetadata(view, s.provider, s.id, { tags });
+  await patchMetadata(view, s.provider, s.id, { tags: parseTagInput(value) });
+}
+
+/** Add/remove entries in the predefined tag catalogue (the `tagCatalog`
+ *  setting). Pre-checks every catalogue entry; unchecking removes it. The
+ *  "Nueva etiqueta…" item appends typed tags. */
+async function manageTagCatalog(view: SessionsView): Promise<void> {
+  const catalog = tagCatalog();
+  const used = view.allUsedTags();
+  const universe = dedupeTags([...catalog, ...used]);
+  const inCatalog = new Set(catalog);
+  const ADD = "$(add) Nueva etiqueta…";
+
+  const items: vscode.QuickPickItem[] = [
+    { label: ADD, alwaysShow: true },
+    { label: "", kind: vscode.QuickPickItemKind.Separator },
+    ...universe.map((t) => ({
+      label: t,
+      picked: inCatalog.has(t),
+      description: view.tagUsageCount(t) ? `${view.tagUsageCount(t)} sesión(es)` : "sin uso",
+    })),
+  ];
+
+  const picks = await vscode.window.showQuickPick(items, {
+    canPickMany: true,
+    title: "Catálogo de etiquetas",
+    placeHolder: "Marca las que quieras en el catálogo (desmarca para quitarlas)",
+  });
+  if (picks === undefined) return;
+
+  const labels = picks.map((p) => p.label);
+  let next = labels.filter((l) => l !== ADD);
+  if (labels.includes(ADD)) {
+    const fresh = await vscode.window.showInputBox({
+      title: "Nueva etiqueta del catálogo",
+      prompt: "Una o varias, separadas por coma o espacio",
+    });
+    if (fresh) next = dedupeTags([...next, ...parseTagInput(fresh)]);
+  }
+  await setTagCatalog(next);
+  vscode.window.showInformationMessage(
+    `Catálogo de etiquetas: ${next.length} etiqueta(s).`
+  );
 }
 
 async function setSessionColor(view: SessionsView, s: Session): Promise<void> {
@@ -1964,7 +2328,9 @@ export function activate(context: vscode.ExtensionContext): void {
       // view; we wrap it so the status-bar button has a single stable name.
       vscode.commands.executeCommand("agentSessions.sessions.focus")
     ),
-    vscode.commands.registerCommand("agentSessions.newSession", newSession),
+    vscode.commands.registerCommand("agentSessions.newSession", () =>
+      newSession(view)
+    ),
     vscode.commands.registerCommand("agentSessions.smartLaunch", () =>
       smartLaunch(view)
     ),
@@ -1982,6 +2348,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentSessions.runTemplate", runTemplate),
     vscode.commands.registerCommand("agentSessions.saveTemplate", saveTemplate),
     vscode.commands.registerCommand("agentSessions.manageTemplates", manageTemplates),
+    vscode.commands.registerCommand("agentSessions.manageTagCatalog", () =>
+      manageTagCatalog(view)
+    ),
     vscode.commands.registerCommand("agentSessions.setFilter", () => setFilter(view)),
     vscode.commands.registerCommand("agentSessions.clearFilter", () => {
       (view as any).filter = "";

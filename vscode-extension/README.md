@@ -15,7 +15,7 @@ binario sidecar `agent-sessions-cli`, que comparte el núcleo Rust
 ```
 VS Code (TypeScript)                  Rust (compartido con aterm)
 ┌─────────────────────────┐  spawn   ┌────────────────────────────┐
-│ TreeDataProvider         │ ───────▶ │ agent-sessions-cli (JSON)  │
+│ WebviewView (cards)      │ ───────▶ │ agent-sessions-cli (JSON)  │
 │ comando "Reanudar"       │ ◀─────── │  └─ agent-sessions (core)  │
 │  └─ window.createTerminal│  stdout  └────────────────────────────┘
 └─────────────────────────┘
@@ -57,7 +57,24 @@ que usa la app nativa, así ambas UIs ven la misma metadata.
   todos. Limpieza con `…: Limpiar worktrees de comparativa…`.
 - ✅ Export a `.zip` (byte-compatible con multi-claude) e import (sólo Claude).
 - ✅ Auto-localización del sidecar (binario empaquetado en el `.vsix` o cargo target).
-- ⏳ Pendiente: filtro por tag, búsqueda en el contenido de la conversación (FTS), borrar sesión.
+- ✅ **Filtros rápidos** en el header: botón «solo activos» (toggle `active:true`)
+  y botón «por etiqueta» (popover con las tags en uso y su conteo, multi-selección).
+- ✅ **Catálogo de etiquetas** (`agentSessions.tagCatalog` + comando «Gestionar
+  catálogo de etiquetas»): al asignar tags eliges de una lista marcable en vez
+  de escribirlas.
+- ✅ **Compactar contexto** (»« en el menú contextual, solo Claude): lanza el
+  `/compact` del proveedor en un terminal efímero sin reanudar la conversación.
+- ✅ **Nueva sesión eligiendo directorio**: workspace, cualquier cwd conocido del
+  proveedor (con su alias) u otra ruta vía diálogo de carpeta. Además, cada
+  cabecera de bucket de proyecto tiene acciones rápidas **«nueva sesión aquí»** y
+  **«abrir terminal aquí»** (terminal normal en ese cwd, sin agente).
+- ✅ **Plegar / desplegar todas las secciones** con un botón de la barra.
+- ✅ **Continuar en otro agente** (handoff) y **reanudar con prompt** desde el menú.
+- ✅ **Plantillas** de lanzamiento, **backup/restore** del catálogo y **alerta de
+  coste diario** (con indicador en la barra de estado).
+- ✅ Búsqueda en el **contenido** de las conversaciones (FTS) vía `search-content`.
+- ✅ Ajustes de **proveedores visibles** (`scanProviders`), **interruptor de red**
+  (`fetchStatus`) y **auto-refresco completo** periódico (`refreshSec`).
 
 ## Instalar
 
@@ -132,4 +149,12 @@ y modelo. Codex/OpenCode/Gemini se configuran de forma análoga si soportan MCP.
 | `agentSessions.cliPath`     | `agent-sessions-cli`    | Ruta al sidecar. Si lo dejas por defecto, la extensión busca en el `.vsix`, en `target/{release,debug}/` y por último en el `PATH`. |
 | `agentSessions.openInEditor`| `true`                  | Abrir las sesiones en el área del editor (pestaña a tamaño completo) en vez del panel inferior. |
 | `agentSessions.closeOnExit` | `true`                  | Cerrar el terminal entero cuando el agente termina (ejecuta `exit` al acabar). |
-| `agentSessions.groupBy`     | `provider`              | Agrupado del árbol: `provider`, `project` o `cascade`.                       |
+| `agentSessions.groupBy`     | `provider`              | Agrupado del árbol: `provider`, `project`, `cascade` o `date`.               |
+| `agentSessions.scanProviders` | los 4 proveedores     | Proveedores visibles en el panel (filtro de visualización; el escaneo sigue). Vacío = todos. |
+| `agentSessions.fetchStatus` | `true`                  | Interruptor de red: consultar statuspage y mostrar la cuota del proveedor. Desactívalo para trabajar sin tráfico de red. |
+| `agentSessions.refreshSec`  | `120`                   | Cada cuántos segundos re-escanear el disco completo. `0` desactiva; valores 1–14 se ajustan a 15. |
+| `agentSessions.tagCatalog`  | `[]`                    | Etiquetas predefinidas que aparecen como opciones marcables al asignar tags. |
+| `agentSessions.pollIntervalSec` | `5`                 | Cadencia del sondeo de estado en vivo (activas / esperando input).           |
+| `agentSessions.notifyOnIdle`| `true`                  | Notificar cuando una sesión activa pasa de «trabajando» a «esperando input». |
+| `agentSessions.notifyOnFinish`| `true`                | Notificar cuando una sesión activa termina.                                  |
+| `agentSessions.costAlertDaily`| `0`                   | Umbral diario de gasto en USD; `0` desactiva la alerta.                      |

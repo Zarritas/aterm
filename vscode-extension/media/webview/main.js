@@ -45,6 +45,8 @@ try {
   /** Persisted UI-only state: collapsed buckets (by key), dashboard toggle. */
   let ui = vscode.getState() || { collapsed: {}, showStats: false };
   if (ui.showStats == null) ui.showStats = false;
+  // Older persisted state may predate `collapsed`; every consumer indexes it.
+  if (ui.collapsed == null || typeof ui.collapsed !== "object") ui.collapsed = {};
 
   const NO_PROJECT = "(sin proyecto)";
 
@@ -57,6 +59,8 @@ try {
     edit: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="m11.13 1.46 3.41 3.41-9.21 9.21L1.92 14.08l.83-3.41 8.38-9.21Z"/></svg>`,
     palette: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M8 1a7 7 0 1 0 0 14h.5a1.5 1.5 0 0 0 1.06-2.56 1 1 0 0 1 .7-1.71h1.74A2 2 0 0 0 14 8.73V8a7 7 0 0 0-6-7Zm-4 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm2-4a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm4 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm2 4a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>`,
     folder: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M1.5 3a.5.5 0 0 1 .5-.5h4.41l1 1H14a.5.5 0 0 1 .5.5v8.5A1.5 1.5 0 0 1 13 14H3a1.5 1.5 0 0 1-1.5-1.5V3Z"/></svg>`,
+    plus: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M8 2v5H3v2h5v5h2V9h5V7h-5V2H8Z"/></svg>`,
+    terminal: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2.5h12a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1Zm1.8 3-.9.9 2.2 2-2.2 2 .9.9L7 8.4 3.8 5.5ZM8 9.5h4.2v1.2H8V9.5Z"/></svg>`,
     star: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="m8 1.5 1.93 4.18 4.57.43-3.45 3.04 1.02 4.5L8 11.27 3.93 13.65l1.02-4.5L1.5 6.11l4.57-.43L8 1.5Z"/></svg>`,
     note: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M3 2h7l3 3v9H3V2Zm6.5 4V3L12 6H9.5ZM5 8h6v1H5V8Zm0 2.5h6v1H5v-1Z"/></svg>`,
   };
@@ -612,8 +616,20 @@ try {
       quotaPills(quota).forEach((p) => node.appendChild(p));
     }
     if (cwd && cwd !== NO_PROJECT) {
-      // Inline edit actions for project buckets.
+      // Inline actions for project buckets: launch here, terminal here, edit.
       const actions = el("span", { class: "actions" });
+      actions.appendChild(
+        actionBtn("Nueva sesión aquí", ICONS.plus, (e) => {
+          e.stopPropagation();
+          post("newSession", { cwd });
+        })
+      );
+      actions.appendChild(
+        actionBtn("Abrir terminal aquí", ICONS.terminal, (e) => {
+          e.stopPropagation();
+          post("openTerminal", { cwd });
+        })
+      );
       actions.appendChild(
         actionBtn("Renombrar proyecto", ICONS.edit, (e) => {
           e.stopPropagation();
@@ -997,24 +1013,11 @@ try {
 
   /** Add `#tag` to the filter, or remove it if it's already there. The
    *  matchesFilter() helper treats `#name` tokens as exact-tag predicates. */
+  // Clicking a tag badge on a card toggles the same `#tag` token as the header
+  // tag popover. Delegating to toggleToken keeps the quick-filter buttons and
+  // the tag menu in sync (applyFilter → updateQuickFilters).
   function toggleTagFilter(tag) {
-    const token = `#${tag}`;
-    const tokens = (state.filter || "")
-      .split(/\s+/)
-      .filter((t) => t.length > 0);
-    const idx = tokens.findIndex((t) => t.toLowerCase() === token.toLowerCase());
-    let next;
-    if (idx >= 0) {
-      tokens.splice(idx, 1);
-      next = tokens.join(" ");
-    } else {
-      next = tokens.concat([token]).join(" ");
-    }
-    state.filter = next;
-    filterInput.value = next;
-    clearBtn.hidden = next.length === 0;
-    render();
-    post("filterChanged", { value: next });
+    toggleToken(`#${tag}`);
   }
 
   // ── Stats / dashboard ────────────────────────────────────────────────────
@@ -1225,11 +1228,122 @@ try {
     return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
   }
 
+  // ── Filter-token helpers ───────────────────────────────────────────────
+  // The filter is a whitespace-separated AND of predicates. The quick-filter
+  // buttons just toggle individual tokens (e.g. `active:true`, `#wip`) in/out
+  // of that string, so they compose with whatever the user typed.
+  const filterTokens = (q) => (q || "").split(/\s+/).filter(Boolean);
+  const hasToken = (tok) =>
+    filterTokens(state.filter).some((t) => t.toLowerCase() === tok.toLowerCase());
+
+  function applyFilter(value) {
+    state.filter = value;
+    filterInput.value = value;
+    clearBtn.hidden = value.length === 0;
+    updateQuickFilters();
+    render();
+    post("filterChanged", { value });
+  }
+  function toggleToken(tok) {
+    const lo = tok.toLowerCase();
+    const toks = filterTokens(state.filter);
+    const i = toks.findIndex((t) => t.toLowerCase() === lo);
+    if (i >= 0) toks.splice(i, 1);
+    else toks.push(tok);
+    applyFilter(toks.join(" "));
+  }
+
+  /** Distinct tags assigned across all sessions, with usage counts, sorted. */
+  function usedTags() {
+    const counts = new Map();
+    for (const s of state.sessions) {
+      const m = metaFor(s);
+      if (m && m.tags)
+        for (const t of m.tags) counts.set(t, (counts.get(t) || 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }
+
+  /** Reflect the current filter on the quick-filter buttons (they live in the
+   *  header, outside the `#tree` that render() rebuilds). */
+  function updateQuickFilters() {
+    const onlyActive = hasToken("active:true");
+    activeBtn.setAttribute("aria-pressed", onlyActive ? "true" : "false");
+    activeBtn.classList.toggle("active", onlyActive);
+
+    const tagToks = filterTokens(state.filter).filter((t) => t.startsWith("#"));
+    tagsBtn.classList.toggle("active", tagToks.length > 0);
+    tagsBtn.setAttribute(
+      "title",
+      tagToks.length
+        ? `Filtrando por: ${tagToks.join(" ")}`
+        : "Filtrar por etiqueta"
+    );
+  }
+
+  function buildTagMenu() {
+    tagMenu.innerHTML = "";
+    const tags = usedTags();
+    if (tags.length === 0) {
+      tagMenu.appendChild(
+        el("div", { class: "tag-menu-empty", text: "No hay etiquetas todavía." })
+      );
+      return;
+    }
+    const active = new Set(
+      filterTokens(state.filter)
+        .filter((t) => t.startsWith("#"))
+        .map((t) => t.slice(1).toLowerCase())
+    );
+    for (const [tag, count] of tags) {
+      const on = active.has(tag.toLowerCase());
+      tagMenu.appendChild(
+        el("button", {
+          class: `tag-menu-item ${on ? "checked" : ""}`,
+          role: "menuitemcheckbox",
+          "aria-checked": on ? "true" : "false",
+          onClick: (e) => {
+            e.stopPropagation();
+            toggleToken(`#${tag}`);
+            buildTagMenu(); // refresh checks, keep the menu open for multi-select
+          },
+          html: `<span class="check">${on ? "✓" : ""}</span>
+                 <span class="label">#${escapeHtml(tag)}</span>
+                 <span class="count">${count}</span>`,
+        })
+      );
+    }
+  }
+
+  function openTagMenu() {
+    buildTagMenu();
+    tagMenu.hidden = false;
+    tagsBtn.setAttribute("aria-expanded", "true");
+  }
+  function closeTagMenu() {
+    tagMenu.hidden = true;
+    tagsBtn.setAttribute("aria-expanded", "false");
+  }
+
   // ── Toolbar wiring ───────────────────────────────────────────────────────
   const filterInput = /** @type {HTMLInputElement} */ (
     document.getElementById("filter")
   );
   const clearBtn = document.getElementById("clear-filter");
+  const activeBtn = document.getElementById("qf-active");
+  const tagsBtn = document.getElementById("qf-tags");
+  const tagMenu = document.getElementById("tag-menu");
+
+  activeBtn.addEventListener("click", () => toggleToken("active:true"));
+  tagsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (tagMenu.hidden) openTagMenu();
+    else closeTagMenu();
+  });
+  tagMenu.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", () => {
+    if (!tagMenu.hidden) closeTagMenu();
+  });
   let filterDebounce = 0;
   filterInput.addEventListener("input", () => {
     window.clearTimeout(filterDebounce);
@@ -1237,17 +1351,12 @@ try {
     filterDebounce = window.setTimeout(() => {
       state.filter = value;
       clearBtn.hidden = value.length === 0;
+      updateQuickFilters();
       render();
       post("filterChanged", { value });
     }, 120);
   });
-  clearBtn.addEventListener("click", () => {
-    filterInput.value = "";
-    state.filter = "";
-    clearBtn.hidden = true;
-    render();
-    post("filterChanged", { value: "" });
-  });
+  clearBtn.addEventListener("click", () => applyFilter(""));
 
   document.querySelectorAll(".group-toggle button").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1282,6 +1391,26 @@ try {
     updateStatsBtn();
     render();
   });
+  // Collapse/expand every section in one shot. Toggles on current state:
+  // if anything is open → collapse all; otherwise → expand all.
+  function setAllCollapsed(collapse) {
+    if (collapse) {
+      for (const b of document.querySelectorAll(".bucket[data-key]")) {
+        const k = b.getAttribute("data-key");
+        if (k) ui.collapsed[k] = true;
+      }
+    } else {
+      ui.collapsed = {};
+    }
+    vscode.setState(ui);
+    render();
+  }
+  document.getElementById("action-collapse").addEventListener("click", () => {
+    const anyExpanded = [
+      ...document.querySelectorAll(".bucket[data-key]"),
+    ].some((b) => b.getAttribute("aria-expanded") === "true");
+    setAllCollapsed(anyExpanded);
+  });
   document
     .getElementById("action-refresh")
     .addEventListener("click", () => post("refresh"));
@@ -1300,6 +1429,8 @@ try {
       filterInput.value = state.filter || "";
       clearBtn.hidden = !state.filter;
       updateGroupToggle();
+      updateQuickFilters();
+      if (!tagMenu.hidden) buildTagMenu();
       diag("state push", {
         providers: state.providers.length,
         sessions: state.sessions.length,
