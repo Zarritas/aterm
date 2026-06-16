@@ -68,8 +68,8 @@ que usa la app nativa, así ambas UIs ven la misma metadata.
   slash-commands de `~/.claude/commands`, independiente de un proyecto: eliges
   dónde lanzarlos.
 - **Terminal Profiles** por proveedor en el desplegable `+` del terminal.
-- **Plantillas** de lanzamiento con etiquetas y cwd; **comparativa paralela** con
-  un git worktree por agente.
+- **Plantillas** de lanzamiento con etiquetas y cwd · **comparativa paralela** con
+  un git worktree por agente. _(funciones **Pro** — ver más abajo)_
 
 ### Búsqueda y filtros
 - Filtro con **predicados**: `provider:`, `model:`, `cwd:`, `branch:`, `#tag`,
@@ -118,6 +118,36 @@ que usa la app nativa, así ambas UIs ven la misma metadata.
 - **Previsualizar** la conversación en un panel estilado (turnos en burbujas con
   cabecera de metadatos y render Markdown), reutilizable entre sesiones.
 - Auto-localización del sidecar (empaquetado en el `.vsix` o `target/`).
+
+## Edición Pro
+
+La extensión es **open-core**: casi todo es gratis. Unas pocas funciones avanzadas
+son **Pro**:
+
+- **Comparativa paralela** (un agente por git worktree) + comparar/limpiar worktrees.
+- **Plantillas de lanzamiento** (guardar / lanzar / gestionar).
+
+Hay una **prueba de 14 días**; después, esas acciones piden activar una licencia
+(las demás siguen gratis). Activa con **«Agent Sessions: Activar licencia Pro…»**
+y consulta el estado con **«Estado de la licencia Pro»**.
+
+### Emitir licencias (para el mantenedor)
+
+Las licencias se firman **offline** con Ed25519 (sin servidor). Una vez por
+proyecto:
+
+```bash
+cd vscode-extension
+node scripts/sign-license.mjs keygen          # crea license-private.pem (¡backup!) y embebe la pública
+node scripts/sign-license.mjs sign cliente@correo.com        # licencia perpetua
+node scripts/sign-license.mjs sign cliente@correo.com 365    # caduca en 365 días
+node scripts/sign-license.mjs verify ATERM-PRO.…             # validar una clave
+```
+
+`license-private.pem` es el secreto de firma (gitignored): guárdalo a buen recaudo;
+si lo pierdes no podrás emitir más claves válidas contra la pública publicada.
+Cualquier checkout (Lemon Squeezy / Polar / Gumroad) puede emitir claves llamando
+a `sign` desde su webhook.
 
 ## Instalar
 

@@ -204,6 +204,17 @@ construye el sidecar para esa plataforma y lo empaqueta en el `.vsix` bajo
   cuando el uso está por debajo de 200k (los logs no registran la ventana ni el
   flag `[1m]`). Mitigado con el setting `claudeContextWindow` (auto/200k/1m),
   aplicado en card, filtro `ctx` y preview — sin tocar el core.
+- ✅ **Modelo open-core / Pro (extensión, v1.2.0)**: la extensión de VS Code es
+  open-core. Gate en `vscode-extension/src/license.ts` (`LicenseService`): prueba
+  de 14 días + verificación de licencia **Ed25519 offline** (clave pública
+  embebida; sin servidor). Helper `requirePro(feature)` con upsell. Features
+  **Pro**: comparativa paralela (`launchParallel`/`compareWorktrees`/
+  `cleanupWorktrees`) y plantillas (`saveTemplate`/`runTemplate`/`manageTemplates`).
+  Comandos `activateLicense`/`proStatus` (+ `debugPro` para QA, quitar antes del
+  release público). Emisión de claves con `scripts/sign-license.mjs`
+  (`keygen`/`sign`/`verify`); la privada `license-private.pem` es secreto
+  (gitignored). Pendiente: `BUY_URL` real + split de repos (mover el source Pro a
+  un repo privado para que no sea recompilable desde el OSS).
 - ⏳ **Fase 5 (render GPU)**: no hecha por diseño — opcional, solo si el throughput
   lo justifica (ver roadmap).
 - ⏳ **Pendientes menores**: import solo a Claude (el `.zip` es formato Claude);

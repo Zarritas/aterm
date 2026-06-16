@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Agent Sessions",
   "description": "Lista, previsualiza y reanuda tus sesiones de agentes de código (Claude Code, Codex, OpenCode, Gemini) en el terminal integrado.",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "publisher": "Zarritas",
   "author": "Jesús Lorenzo",
   "license": "MIT",
@@ -209,6 +209,23 @@
         "title": "Configurar servidor MCP…",
         "category": "Agent Sessions",
         "icon": "$(server-process)"
+      },
+      {
+        "command": "agentSessions.activateLicense",
+        "title": "Activar licencia Pro…",
+        "category": "Agent Sessions",
+        "icon": "$(key)"
+      },
+      {
+        "command": "agentSessions.proStatus",
+        "title": "Estado de la licencia Pro",
+        "category": "Agent Sessions",
+        "icon": "$(star)"
+      },
+      {
+        "command": "agentSessions.debugPro",
+        "title": "(debug) Cambiar estado de prueba Pro",
+        "category": "Agent Sessions"
       }
     ],
     "keybindings": [

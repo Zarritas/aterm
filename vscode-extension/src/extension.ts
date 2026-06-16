@@ -16,7 +16,28 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 
+import { BUY_URL, LicenseService } from "./license";
+
 let extensionPath = "";
+
+/** Pro licence gate (open-core). Set in activate(). */
+let license: LicenseService;
+
+/** Guard for a Pro-only feature: returns true when unlocked, otherwise shows an
+ *  upsell and returns false so the caller can bail out. */
+function requirePro(feature: string): boolean {
+  if (license && license.isPro()) return true;
+  void (async () => {
+    const pick = await vscode.window.showInformationMessage(
+      `Agent Sessions: «${feature}» es una función Pro.`,
+      "Activar licencia",
+      "Comprar Pro"
+    );
+    if (pick === "Activar licencia") await license.activate();
+    else if (pick === "Comprar Pro") void vscode.env.openExternal(vscode.Uri.parse(BUY_URL));
+  })();
+  return false;
+}
 
 /** Output channel where the webview pipes diagnostics. Visible via
  *  `View → Output → Agent Sessions`. Avoids relying on DevTools, which
@@ -1484,6 +1505,7 @@ function exec(file: string, args: string[], cwd?: string): Promise<string> {
  *  agents to use and types the prompt; we create the worktrees, open a
  *  terminal per agent, fire up the CLI and (best-effort) paste the prompt. */
 async function launchParallel(): Promise<void> {
+  if (!requirePro("Comparativa paralela")) return;
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     notifyWarn(
@@ -1584,6 +1606,7 @@ async function launchParallel(): Promise<void> {
  *  branch has on top of HEAD, and a link to open the worktree as a folder.
  *  Run after a `launchParallel` session to see at a glance who did what. */
 async function compareWorktrees(): Promise<void> {
+  if (!requirePro("Comparar worktrees")) return;
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     notifyWarn(
@@ -1674,6 +1697,7 @@ async function compareWorktrees(): Promise<void> {
  *  ones the user selects. Soft cleanup: prunes worktrees and deletes branches,
  *  never touches committed work. */
 async function cleanupWorktrees(): Promise<void> {
+  if (!requirePro("Limpiar worktrees")) return;
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     notifyWarn(
@@ -3197,6 +3221,7 @@ interface LaunchTemplate {
  *  an optional pinned cwd. Then it shows up in `runTemplate` for one-click
  *  relaunch. */
 async function saveTemplate(view: SessionsView): Promise<void> {
+  if (!requirePro("Plantillas de lanzamiento")) return;
   let providers: ProviderInfo[];
   try {
     providers = await runCli<ProviderInfo[]>(["providers"]);
@@ -3259,6 +3284,7 @@ async function saveTemplate(view: SessionsView): Promise<void> {
 }
 
 async function runTemplate(view: SessionsView): Promise<void> {
+  if (!requirePro("Plantillas de lanzamiento")) return;
   let templates: LaunchTemplate[];
   try {
     templates = (await runCli<LaunchTemplate[]>(["templates-get"])) || [];
@@ -3317,6 +3343,7 @@ async function runTemplate(view: SessionsView): Promise<void> {
 }
 
 async function manageTemplates(): Promise<void> {
+  if (!requirePro("Plantillas de lanzamiento")) return;
   let templates: LaunchTemplate[];
   try {
     templates = (await runCli<LaunchTemplate[]>(["templates-get"])) || [];
@@ -3629,6 +3656,8 @@ async function showActionsMenu(): Promise<void> {
     label,
     kind: vscode.QuickPickItemKind.Separator,
   });
+  // Suffix used to flag Pro features in the menu when they're locked.
+  const pro = license && license.isPro() ? "" : " $(lock)";
   const items: Item[] = [
     sep("Lanzar"),
     { label: "$(add) Nueva sesión…", command: "agentSessions.newSession" },
@@ -3637,9 +3666,9 @@ async function showActionsMenu(): Promise<void> {
       command: "agentSessions.newSessionMulti",
     },
     { label: "$(sparkle) Lanzar agente recomendado", command: "agentSessions.smartLaunch" },
-    { label: "$(rocket) Lanzar plantilla…", command: "agentSessions.runTemplate" },
+    { label: `$(rocket) Lanzar plantilla…${pro}`, command: "agentSessions.runTemplate" },
     {
-      label: "$(repo-forked) Lanzar comparativa paralela…",
+      label: `$(repo-forked) Lanzar comparativa paralela…${pro}`,
       command: "agentSessions.launchParallel",
     },
     sep("Buscar / filtrar / agrupar"),
@@ -3666,18 +3695,23 @@ async function showActionsMenu(): Promise<void> {
     sep("Grupos y etiquetas"),
     { label: "$(group-by-ref-type) Gestionar grupos…", command: "agentSessions.manageGroups" },
     { label: "$(tag) Gestionar catálogo de etiquetas…", command: "agentSessions.manageTagCatalog" },
-    sep("Plantillas"),
-    { label: "$(save) Guardar plantilla…", command: "agentSessions.saveTemplate" },
-    { label: "$(list-unordered) Gestionar plantillas…", command: "agentSessions.manageTemplates" },
+    sep("Plantillas (Pro)"),
+    { label: `$(save) Guardar plantilla…${pro}`, command: "agentSessions.saveTemplate" },
+    { label: `$(list-unordered) Gestionar plantillas…${pro}`, command: "agentSessions.manageTemplates" },
     sep("Mantenimiento"),
     { label: "$(trash) Eliminar sesiones por fecha…", command: "agentSessions.deleteByDate" },
     { label: "$(cloud-upload) Importar .zip…", command: "agentSessions.import" },
     { label: "$(archive) Backup del catálogo…", command: "agentSessions.backupCatalog" },
     { label: "$(history) Restaurar catálogo…", command: "agentSessions.restoreCatalog" },
     { label: "$(server-process) Configurar servidor MCP…", command: "agentSessions.configureMcp" },
-    { label: "$(diff) Comparar resultados de worktrees…", command: "agentSessions.compareWorktrees" },
-    { label: "$(trash) Limpiar worktrees de comparativa…", command: "agentSessions.cleanupWorktrees" },
+    { label: `$(diff) Comparar resultados de worktrees…${pro}`, command: "agentSessions.compareWorktrees" },
+    { label: `$(trash) Limpiar worktrees de comparativa…${pro}`, command: "agentSessions.cleanupWorktrees" },
     { label: "$(refresh) Refrescar", command: "agentSessions.refresh" },
+    sep("Pro"),
+    {
+      label: license && license.isPro() ? "$(verified) Estado de la licencia" : "$(star) Activar Pro / estado",
+      command: "agentSessions.proStatus",
+    },
   ];
   const pick = await vscode.window.showQuickPick(items, {
     placeHolder: "Acciones de Agent Sessions",
@@ -3995,6 +4029,8 @@ export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel("Agent Sessions");
   context.subscriptions.push(output);
   log("Agent Sessions activated.");
+  license = new LicenseService(context);
+  license.startTrialIfNeeded();
   const view = new SessionsView(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(SessionsView.viewType, view, {
@@ -4077,6 +4113,15 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("agentSessions.actionsMenu", () =>
       showActionsMenu()
+    ),
+    vscode.commands.registerCommand("agentSessions.activateLicense", () =>
+      license.activate()
+    ),
+    vscode.commands.registerCommand("agentSessions.proStatus", () =>
+      license.showStatus()
+    ),
+    vscode.commands.registerCommand("agentSessions.debugPro", () =>
+      license.debug()
     ),
     vscode.commands.registerCommand(
       "agentSessions.clearProjectMetadata",
