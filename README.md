@@ -26,6 +26,10 @@ cargo run -p aterm
 
 - `crates/agent-sessions` — read-only session discovery (vendored, 59 tests).
 - `crates/aterm` — the app: egui window + session panel + (WIP) terminal core.
+- `crates/agent-sessions-cli` — JSON sidecar over the core (used by the VS Code extension).
+- `vscode-extension/` — second UI: a VS Code extension that ports the session
+  manager (cards, groups, project commands, …). See its
+  [`README`](./vscode-extension/README.md).
 
 ## License
 

@@ -34,11 +34,17 @@ que usa la app nativa, así ambas UIs ven la misma metadata.
 ### Panel y navegación
 - Panel de sesiones tipo **card** (avatar de proveedor, dos líneas de meta, acento
   de color del proyecto, acciones al hover) — no un TreeView.
-- **Agrupado** por proveedor / proyecto (cwd) / cascada / **fecha** (Hoy, Ayer, …).
+- **Agrupado** por proveedor / proyecto (cwd) / cascada / **fecha** (Hoy, Ayer, …)
+  / **grupo** (colecciones propias). En la vista por proyecto, los **subproyectos**
+  (cwd descendientes) se anidan bajo su proyecto ancestro.
+- **Modo selección** (multiselección con checkboxes): **abrir varias** sesiones,
+  **eliminar varias** o **agruparlas** de una vez desde la barra de acciones.
 - **Modo compacto** (toggle de densidad) para ver más sesiones de un vistazo.
 - **Plegar / desplegar** todas las secciones con un botón.
 - **Paleta de acciones** (`Ctrl/Cmd+Alt+A`): quick-pick de todas las sesiones →
   menú de acciones, sin ratón.
+- **Menú de acciones «⋯»** en la barra del panel: todas las acciones de la
+  extensión agrupadas, sin pasar por la paleta de comandos.
 - Modelo visible por sesión; indicador **"abierta"** (el clic enfoca el terminal
   existente en vez de duplicar el resume).
 
@@ -48,8 +54,15 @@ que usa la app nativa, así ambas UIs ven la misma metadata.
 - **Nueva sesión** eligiendo directorio (workspace / cwd conocido con alias / otra
   ruta), con acciones rápidas **«nueva sesión aquí»** y **«abrir terminal aquí»**
   en cada cabecera de proyecto.
+- **Nueva sesión en varios proyectos** a la vez (un terminal por carpeta elegida).
 - **Smart-launch**: agente recomendado según el cwd.
-- **Compactar contexto** (»«, solo Claude): lanza `/compact` sin reanudar.
+- **Compactar contexto** (»«, solo Claude): lanza `/compact` sin reanudar, o
+  **«compactar con instrucciones…»** (un prompt que enfoca el resumen,
+  `/compact <texto>`).
+- **Comandos del proyecto**: explorador (botón en la cabecera de cada proyecto)
+  que reúne los **slash-commands del agente** (`.claude/commands/**`), los
+  **scripts del repo** (`package.json`/`Makefile`/`justfile`/`Cargo`) y las
+  acciones de la extensión por proyecto.
 - **Terminal Profiles** por proveedor en el desplegable `+` del terminal.
 - **Plantillas** de lanzamiento con etiquetas y cwd; **comparativa paralela** con
   un git worktree por agente.
@@ -63,8 +76,15 @@ que usa la app nativa, así ambas UIs ven la misma metadata.
 
 ### Metadata y organización
 - Renombrar, **etiquetas** (+ **catálogo** de tags reutilizables), **color**,
-  **notas** y **favoritos** por sesión. Compartido con la app nativa.
-- **Proyectos**: alias y color por cwd; **drag & drop** de Claude entre proyectos.
+  **notas**, **favoritos** e **icono/emoji** por sesión. Compartido con la app
+  nativa (el icono se guarda en el estado de la extensión).
+- **Grupos manuales**: colecciones propias (nombre + color + icono) para agrupar
+  sesiones; asignación por menú, por la barra de multiselección o **arrastrando**
+  la card a un bucket de grupo, con su propia vista «por grupo».
+- **Proyectos**: alias, color e **icono** por cwd; **drag & drop** de Claude entre
+  proyectos; **añadir la carpeta del proyecto al workspace** de VS Code con un clic.
+- **Eliminar sesiones**: una a una, en **multiselección**, o **por fecha**
+  («más antiguas que N días»).
 
 ### Persistencia y transferencia
 - ⭐ **Persistir sesiones** (`Persistir` en el menú): guarda una **copia durable**
@@ -81,12 +101,18 @@ que usa la app nativa, así ambas UIs ven la misma metadata.
 - **Dashboard** con KPIs (sesiones, coste $, tokens), barras por proveedor/proyecto
   y sparkline de 30 días.
 - **Alerta de coste diario** + indicador en la barra de estado.
-- Estado de servicio (statuspage) por proveedor; **notificaciones** idle/finish.
+- Estado de servicio (statuspage) por proveedor; **notificaciones** idle/finish
+  con **nivel configurable** (`notificationLevel`: todas / importantes / errores /
+  ninguna; los diálogos de confirmación nunca se silencian).
+- **% de contexto** por sesión; en Claude la ventana es **fijable**
+  (`claudeContextWindow`: auto / 200k / 1M) para que el porcentaje no se infle en
+  cuentas con ventana de 1M.
 
 ### Integración
 - **MCP server** (`agent-sessions-cli serve`) + comando **«Configurar servidor
   MCP…»** que lo registra con un clic. Ver "Uso como MCP".
-- **Previsualizar** la conversación (Markdown).
+- **Previsualizar** la conversación en un panel estilado (turnos en burbujas con
+  cabecera de metadatos y render Markdown), reutilizable entre sesiones.
 - Auto-localización del sidecar (empaquetado en el `.vsix` o `target/`).
 
 ## Instalar
@@ -162,12 +188,14 @@ y modelo. Codex/OpenCode/Gemini se configuran de forma análoga si soportan MCP.
 | `agentSessions.cliPath`     | `agent-sessions-cli`    | Ruta al sidecar. Si lo dejas por defecto, la extensión busca en el `.vsix`, en `target/{release,debug}/` y por último en el `PATH`. |
 | `agentSessions.openInEditor`| `true`                  | Abrir las sesiones en el área del editor (pestaña a tamaño completo) en vez del panel inferior. |
 | `agentSessions.closeOnExit` | `true`                  | Cerrar el terminal entero cuando el agente termina (ejecuta `exit` al acabar). |
-| `agentSessions.groupBy`     | `provider`              | Agrupado del árbol: `provider`, `project`, `cascade` o `date`.               |
+| `agentSessions.groupBy`     | `provider`              | Agrupado del árbol: `provider`, `project`, `cascade`, `date` o `group`.      |
 | `agentSessions.scanProviders` | los 4 proveedores     | Proveedores visibles en el panel (filtro de visualización; el escaneo sigue). Vacío = todos. |
 | `agentSessions.fetchStatus` | `true`                  | Interruptor de red: consultar statuspage y mostrar la cuota del proveedor. Desactívalo para trabajar sin tráfico de red. |
 | `agentSessions.refreshSec`  | `120`                   | Cada cuántos segundos re-escanear el disco completo. `0` desactiva; valores 1–14 se ajustan a 15. |
 | `agentSessions.tagCatalog`  | `[]`                    | Etiquetas predefinidas que aparecen como opciones marcables al asignar tags. |
 | `agentSessions.pollIntervalSec` | `5`                 | Cadencia del sondeo de estado en vivo (activas / esperando input).           |
+| `agentSessions.notificationLevel`| `all`              | Qué notificaciones mostrar: `all`, `important`, `errors` o `none`. Los diálogos que requieren tu respuesta nunca se ven afectados. |
 | `agentSessions.notifyOnIdle`| `true`                  | Notificar cuando una sesión activa pasa de «trabajando» a «esperando input». |
 | `agentSessions.notifyOnFinish`| `true`                | Notificar cuando una sesión activa termina.                                  |
+| `agentSessions.claudeContextWindow`| `auto`           | Ventana de contexto de Claude para el cálculo del %: `auto`, `200k` o `1m`.  |
 | `agentSessions.costAlertDaily`| `0`                   | Umbral diario de gasto en USD; `0` desactiva la alerta.                      |
