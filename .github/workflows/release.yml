@@ -1,13 +1,15 @@
-# Release pipeline — builds the native app as `.deb` and the VS Code
-# extension as `.vsix` for every supported platform, then attaches all the
-# artefacts to a GitHub Release.
+# Release de la app nativa — construye `aterm` (+ el sidecar `agent-sessions-cli`)
+# como `.deb` para cada arquitectura Linux y adjunta los paquetes a una GitHub
+# Release.
+#
+# NOTA: el `.vsix` de la extensión de VS Code YA NO se construye aquí. La
+# extensión vive en su propio repo (Aterm-labs/agent-sessions), que tiene su
+# propio release.yml con la matriz multiplataforma y la publicación en los
+# marketplaces. Este workflow se quedó solo con el paquete nativo.
 #
 # Triggers:
-#   - tag push `v*` (canonical release)
-#   - manual via `workflow_dispatch` (dry-run from the Actions tab; no release)
-#
-# Each artefact is uploaded with `actions/upload-artifact`, so manual runs
-# can still download from the run summary even when no release is cut.
+#   - push de tag `v*` (release canónico)
+#   - manual vía `workflow_dispatch` (dry-run desde la pestaña Actions; sin release)
 
 name: Release
 
@@ -21,7 +23,7 @@ permissions:
   contents: write
 
 jobs:
-  # ── Debian packages (.deb) ──────────────────────────────────────────────
+  # ── Paquetes Debian (.deb) ──────────────────────────────────────────────
   build-deb:
     name: deb · ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -67,8 +69,8 @@ jobs:
 
       - name: Package .deb
         run: |
-          # cargo-deb rewrites the `target/release/...` asset paths to the
-          # per-target dir automatically when `--target` is set.
+          # cargo-deb reescribe las rutas `target/release/...` al dir por-target
+          # automáticamente cuando se pasa `--target`.
           cargo deb -p aterm --no-build --target ${{ matrix.target }}
 
       - name: Rename for clarity
@@ -86,75 +88,10 @@ jobs:
           path: target/${{ matrix.target }}/debian/*.deb
           if-no-files-found: error
 
-  # ── VS Code extension (.vsix) ───────────────────────────────────────────
-  build-vsix:
-    name: vsix · ${{ matrix.vsce }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            vsce: linux-x64
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            vsce: linux-arm64
-          # darwin-x64 cross-compila desde Apple Silicon (macos-14); los runners
-          # macos-13 Intel escasean y se quedan colgados en cola.
-          - os: macos-14
-            target: x86_64-apple-darwin
-            vsce: darwin-x64
-          - os: macos-14
-            target: aarch64-apple-darwin
-            vsce: darwin-arm64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            vsce: win32-x64
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: vsix-${{ matrix.vsce }}
-
-      - name: npm install
-        working-directory: vscode-extension
-        run: npm ci
-
-      - name: Build .vsix (POSIX)
-        if: runner.os != 'Windows'
-        working-directory: vscode-extension
-        run: bash scripts/build-vsix.sh ${{ matrix.vsce }}
-
-      - name: Build .vsix (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        working-directory: vscode-extension
-        run: |
-          # The bash script works fine under git-bash on the Windows runner —
-          # it shells out to cargo + vsce which both run natively.
-          bash scripts/build-vsix.sh ${{ matrix.vsce }}
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-sessions-${{ matrix.vsce }}-vsix
-          path: vscode-extension/*.vsix
-          if-no-files-found: error
-
   # ── GitHub Release ──────────────────────────────────────────────────────
   release:
     name: Publish GitHub Release
-    needs: [build-deb, build-vsix]
+    needs: [build-deb]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
@@ -165,8 +102,7 @@ jobs:
       - name: Flatten artefacts
         run: |
           mkdir -p out
-          find artifacts -type f \( -name '*.deb' -o -name '*.vsix' \) \
-            -exec mv {} out/ \;
+          find artifacts -type f -name '*.deb' -exec mv {} out/ \;
           ls -la out/
 
       - uses: softprops/action-gh-release@v2
@@ -174,82 +110,3 @@ jobs:
           files: out/*
           generate_release_notes: true
           fail_on_unmatched_files: true
-
-  # ── Open VSX (open marketplace para forks de VS Code) ───────────────────
-  # Publica un .vsix por plataforma. Se ejecuta solo en push de tag y solo si
-  # el secret OVSX_PAT está configurado; sin él es un no-op (no rompe el run).
-  publish-openvsx:
-    name: Publish to Open VSX
-    needs: build-vsix
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: vsix
-          pattern: agent-sessions-*-vsix
-
-      - name: Publish each platform .vsix
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: |
-          if [ -z "$OVSX_PAT" ]; then
-            echo "OVSX_PAT no configurado → omito la publicación en Open VSX." >&2
-            exit 0
-          fi
-          # Idempotente: si el namespace ya existe, ignora el error.
-          npx --yes ovsx create-namespace Zarritas -p "$OVSX_PAT" || true
-          shopt -s globstar nullglob
-          published=0
-          for f in vsix/**/*.vsix; do
-            echo "→ Publicando $f"
-            npx --yes ovsx publish "$f" -p "$OVSX_PAT"
-            published=$((published + 1))
-          done
-          if [ "$published" -eq 0 ]; then
-            echo "No se encontró ningún .vsix para publicar." >&2
-            exit 1
-          fi
-
-  # ── Visual Studio Marketplace (Microsoft) ───────────────────────────────
-  # Publica un .vsix por plataforma con vsce. Solo en push de tag y solo si el
-  # secret VSCE_PAT (Azure DevOps PAT con scope Marketplace > Manage) existe;
-  # sin él es un no-op.
-  publish-vsce:
-    name: Publish to VS Marketplace
-    needs: build-vsix
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: vsix
-          pattern: agent-sessions-*-vsix
-
-      - name: Publish each platform .vsix
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          if [ -z "$VSCE_PAT" ]; then
-            echo "VSCE_PAT no configurado → omito la publicación en VS Marketplace." >&2
-            exit 0
-          fi
-          shopt -s globstar nullglob
-          published=0
-          for f in vsix/**/*.vsix; do
-            echo "→ Publicando $f"
-            npx --yes @vscode/vsce publish --packagePath "$f" -p "$VSCE_PAT"
-            published=$((published + 1))
-          done
-          if [ "$published" -eq 0 ]; then
-            echo "No se encontró ningún .vsix para publicar." >&2
-            exit 1
-          fi
