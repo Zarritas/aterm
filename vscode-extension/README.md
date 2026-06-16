@@ -128,8 +128,11 @@ son **Pro**:
 - **Plantillas de lanzamiento** (guardar / lanzar / gestionar).
 - **Perfiles de espacio de trabajo**: guarda un conjunto de sesiones y reábrelas
   todas de un clic (restaura el entorno de un proyecto en segundos).
-- **Dashboard Pro**: informe con filtros por rango de fecha, desglose por
-  proveedor / proyecto / modelo, **presupuestos por proyecto** y export a CSV.
+- **Dashboard Pro**: informe visual (panel con gráficas — donut por proveedor,
+  barras de proyectos/modelos, sparkline 30d) con filtros por rango de fecha y
+  export a CSV. Accesible desde el botón «Informe avanzado (Pro)» del panel de
+  estadísticas. _(Los presupuestos admin→equipo se reservan para un futuro tier
+  Team.)_
 - **Exportar conversación a HTML** estilado (para compartir/archivar; PDF vía
   imprimir).
 - **Automatizaciones**: aviso cuando una sesión lleva *idle* más de N minutos

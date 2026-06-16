@@ -21,6 +21,8 @@ export interface SessionLite {
   model?: string | null;
   costUsd?: number | null;
   lastActivity?: number;
+  contextTokens?: number | null;
+  messageCount?: number | null;
 }
 
 /** One conversation turn (from the sidecar preview). */
@@ -77,7 +79,6 @@ export interface ProModule {
   openWorkspaceProfile(api: ProApi): Promise<void>;
   manageWorkspaceProfiles(api: ProApi): Promise<void>;
   proReport(api: ProApi): Promise<void>;
-  setProjectBudget(api: ProApi): Promise<void>;
   exportConversationHtml(api: ProApi): Promise<void>;
   dailySummary(api: ProApi): Promise<void>;
   /** Optional background setup (timers/watchers). Called once when the module

@@ -1408,6 +1408,18 @@ try {
     ]);
     statsView.appendChild(kpis);
 
+    // CTA: open the Pro report (graphs, filters, budgets, CSV). The command is
+    // gated — without Pro it shows the upsell dialog; with Pro it opens the
+    // dashboard panel.
+    statsView.appendChild(
+      el("button", {
+        class: "pro-report-cta",
+        title: "Informe avanzado con gráficas, filtros por fecha, presupuestos y export CSV",
+        html: `${ICONS.star} Informe avanzado (Pro)`,
+        onClick: () => post("proReport"),
+      })
+    );
+
     // Sessions-per-provider bar chart.
     const byProvider = new Map();
     for (const s of sessions) {

@@ -767,6 +767,26 @@ body.selecting .card .archive-indicator {
   color: var(--vscode-descriptionForeground);
   font-size: calc(var(--vscode-font-size) - 1px);
 }
+.pro-report-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 6px 14px;
+  font: inherit;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+.pro-report-cta:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+.pro-report-cta svg {
+  width: 13px;
+  height: 13px;
+}
 .stats-empty {
   text-align: center;
   color: var(--vscode-descriptionForeground);

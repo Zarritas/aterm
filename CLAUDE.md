@@ -228,8 +228,9 @@ construye el sidecar para esa plataforma y lo empaqueta en el `.vsix` bajo
   previo conserva esas features; el split protege el desarrollo futuro.
   **Features Pro** (en `aterm-pro/pro/index.ts`): comparativa paralela,
   plantillas, **perfiles de espacio de trabajo** (guardar/abrir conjuntos de
-  sesiones), **dashboard Pro** (informe + presupuestos por proyecto + export
-  CSV), **exportar conversación a HTML** y **automatizaciones** (watcher de
+  sesiones), **dashboard Pro** (informe webview con gráficas + export CSV;
+  presupuestos reservados para tier Team), **exportar conversación a HTML** y
+  **automatizaciones** (watcher de
   idle vía `ProModule.activate` + resumen diario). El contrato `ProApi`/
   `ProModule` (`src/pro-api.d.ts`) creció con `sessions`/`resume`/`getState`/
   `setState`/`addDisposable`. Refinamientos del gate: indicador en barra de

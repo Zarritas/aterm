@@ -921,6 +921,10 @@ class SessionsView implements vscode.WebviewViewProvider {
         return showProjectCommands(this, msg.cwd ? String(msg.cwd) : undefined);
       case "actionsMenu":
         return showActionsMenu();
+      case "proReport":
+        // Gated command: upsell if not Pro, dashboard if Pro.
+        await vscode.commands.executeCommand("agentSessions.proReport");
+        return;
       case "searchContent": {
         const q = String(msg.query || "").trim();
         if (!q || !this.view) return;
@@ -3772,10 +3776,6 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "agentSessions.proReport",
       runPro("proReport", "Dashboard Pro")
-    ),
-    vscode.commands.registerCommand(
-      "agentSessions.setProjectBudget",
-      runPro("setProjectBudget", "Dashboard Pro")
     ),
     vscode.commands.registerCommand(
       "agentSessions.exportConversationHtml",
