@@ -1,8 +1,0 @@
-node_modules/
-out/
-bin/
-*.vsix
-
-# Pro licence signing secret — never commit. Back it up elsewhere.
-license-private.pem
-*.pem

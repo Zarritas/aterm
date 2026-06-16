@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Bocadillo de chat (agente) con cola -->
-  <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H9l-4 3.5V18H4a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 4 5.5z"/>
-  <!-- Prompt de terminal dentro: chevron > y cursor _ -->
-  <polyline points="7,9.5 9.5,11.7 7,13.9"/>
-  <line x1="11.5" y1="13.9" x2="15.5" y2="13.9"/>
-</svg>
