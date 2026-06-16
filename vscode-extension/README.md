@@ -60,9 +60,13 @@ que usa la app nativa, así ambas UIs ven la misma metadata.
   **«compactar con instrucciones…»** (un prompt que enfoca el resumen,
   `/compact <texto>`).
 - **Comandos del proyecto**: explorador (botón en la cabecera de cada proyecto)
-  que reúne los **slash-commands del agente** (`.claude/commands/**`), los
-  **scripts del repo** (`package.json`/`Makefile`/`justfile`/`Cargo`) y las
-  acciones de la extensión por proyecto.
+  que reúne, en secciones separadas, los **slash-commands del proyecto**
+  (`.claude/commands/**`, versionados con el repo), los **globales del usuario**
+  (`~/.claude/commands/**`), los **scripts del repo**
+  (`package.json`/`Makefile`/`justfile`/`Cargo`) y las acciones de la extensión.
+- **Comandos globales de usuario**: acceso propio (menú «⋯» / comando) a los
+  slash-commands de `~/.claude/commands`, independiente de un proyecto: eliges
+  dónde lanzarlos.
 - **Terminal Profiles** por proveedor en el desplegable `+` del terminal.
 - **Plantillas** de lanzamiento con etiquetas y cwd; **comparativa paralela** con
   un git worktree por agente.

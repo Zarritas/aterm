@@ -82,7 +82,7 @@ try {
     note: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M3 2h7l3 3v9H3V2Zm6.5 4V3L12 6H9.5ZM5 8h6v1H5V8Zm0 2.5h6v1H5v-1Z"/></svg>`,
     archive: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M1.5 2h13v3h-13V2Zm1 4h11v8h-11V6Zm3.5 2v1.5h4V8H6Z"/></svg>`,
     folderAdd: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M1.5 3a.5.5 0 0 1 .5-.5h4.41l1 1H14a.5.5 0 0 1 .5.5v3.1A4.5 4.5 0 0 0 8.26 13.5H3a1.5 1.5 0 0 1-1.5-1.5V3Z"/><path fill="currentColor" d="M12 8.5h1.2v1.8H15v1.2h-1.8V13H12v-1.5h-1.8v-1.2H12V8.5Z"/></svg>`,
-    command: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2h12a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Zm1.6 3.1.85.85L3 7.4l1.45 1.45-.85.85L1.3 7.4l2.3-2.3ZM7 9.3h3.2v1.2H7V9.3Z"/></svg>`,
+    command: `<svg viewBox="0 0 16 16"><path fill="currentColor" d="M1.8 3.2h2v2h-2v-2Zm4 .3h8.4v1.4H5.8V3.5ZM1.8 7h2v2h-2V7Zm4 .3h8.4v1.4H5.8V7.3ZM1.8 10.8h2v2h-2v-2Zm4 .3h8.4v1.4H5.8v-1.4Z"/></svg>`,
   };
 
   // ── Provider colours (theme-aware via CSS vars) ──────────────────────────

@@ -3648,8 +3648,10 @@ async function showActionsMenu(): Promise<void> {
     { label: "$(clear-all) Limpiar filtro", command: "agentSessions.clearFilter" },
     { label: "$(list-tree) Agrupar por…", command: "agentSessions.setGroupBy" },
     { label: "$(list-selection) Acciones rápidas de sesión…", command: "agentSessions.quickActions" },
+    sep("Comandos"),
+    { label: "$(list-unordered) Comandos del proyecto…", command: "agentSessions.projectCommands" },
+    { label: "$(globe) Comandos globales de usuario…", command: "agentSessions.userCommands" },
     sep("Proyectos"),
-    { label: "$(terminal) Comandos del proyecto…", command: "agentSessions.projectCommands" },
     { label: "$(edit) Renombrar proyecto…", command: "agentSessions.renameProject" },
     { label: "$(symbol-color) Color del proyecto…", command: "agentSessions.setProjectColor" },
     { label: "$(star-empty) Icono del proyecto…", command: "agentSessions.setProjectIcon" },
@@ -3856,7 +3858,7 @@ function runInTerminal(cwd: string, label: string, command: string): void {
 
 /** Launch a Claude session in `cwd` and send a custom slash-command. */
 async function launchSlashCommand(
-  cwd: string,
+  cwd: string | null | undefined,
   name: string
 ): Promise<void> {
   const args = await vscode.window.showInputBox({
@@ -3881,6 +3883,41 @@ async function launchSlashCommand(
   if (terminal) setTimeout(() => terminal.sendText(full, false), 2500);
 }
 
+/** Show the user's global slash-commands (~/.claude/commands), available in any
+ *  project. Picking one asks where to launch (workspace / known cwd / browse)
+ *  and starts Claude there with the command. Separate from the per-project
+ *  explorer because these aren't tied to a single project. */
+async function showUserCommands(view: SessionsView): Promise<void> {
+  const cmds: SlashCommand[] = [];
+  collectSlashCommands(
+    path.join(os.homedir(), ".claude", "commands"),
+    "usuario",
+    cmds
+  );
+  if (cmds.length === 0) {
+    notifyInfo(
+      "Agent Sessions: no hay comandos globales en ~/.claude/commands."
+    );
+    return;
+  }
+  cmds.sort((a, b) => a.name.localeCompare(b.name));
+  const pick = await vscode.window.showQuickPick(
+    cmds.map((s) => ({
+      label: `$(comment) ${s.name}`,
+      detail: s.description || undefined,
+      name: s.name,
+    })),
+    {
+      placeHolder: "Comandos globales (~/.claude/commands)",
+      matchOnDetail: true,
+    }
+  );
+  if (!pick) return;
+  const cwd = await pickLaunchCwd(view, "claude");
+  if (cwd === undefined) return; // cancelled
+  await launchSlashCommand(cwd, pick.name);
+}
+
 /** Show every command available for a project in one QuickPick. */
 async function showProjectCommands(view: SessionsView, cwd?: string): Promise<void> {
   const c = await pickProjectCwd(view, cwd);
@@ -3890,20 +3927,23 @@ async function showProjectCommands(view: SessionsView, cwd?: string): Promise<vo
   const items: Item[] = [];
 
   const slash = discoverSlashCommands(c);
-  if (slash.length) {
-    items.push({
-      label: "Slash-commands del agente",
-      kind: vscode.QuickPickItemKind.Separator,
-    });
-    for (const s of slash) {
+  const projectCmds = slash.filter((s) => s.scope === "proyecto");
+  const globalCmds = slash.filter((s) => s.scope === "usuario");
+  const pushSlash = (cmds: SlashCommand[], heading: string) => {
+    if (cmds.length === 0) return;
+    items.push({ label: heading, kind: vscode.QuickPickItemKind.Separator });
+    for (const s of cmds) {
       items.push({
         label: `$(comment) ${s.name}`,
-        description: s.scope,
         detail: s.description || undefined,
         run: () => launchSlashCommand(c, s.name),
       });
     }
-  }
+  };
+  // Project-local commands (.claude/commands) first, then the user's global
+  // ones (~/.claude/commands), which are available in every project.
+  pushSlash(projectCmds, "Comandos del proyecto (.claude/commands)");
+  pushSlash(globalCmds, "Comandos globales (~/.claude/commands)");
 
   const scripts = discoverScripts(c);
   if (scripts.length) {
@@ -4031,6 +4071,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "agentSessions.projectCommands",
       (cwd?: string) => showProjectCommands(view, cwd)
+    ),
+    vscode.commands.registerCommand("agentSessions.userCommands", () =>
+      showUserCommands(view)
     ),
     vscode.commands.registerCommand("agentSessions.actionsMenu", () =>
       showActionsMenu()
