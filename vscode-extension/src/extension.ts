@@ -17,11 +17,24 @@ import * as path from "path";
 import * as vscode from "vscode";
 
 import { BUY_URL, LicenseService } from "./license";
+import type { ProApi, ProModule } from "./pro-api";
 
 let extensionPath = "";
 
 /** Pro licence gate (open-core). Set in activate(). */
 let license: LicenseService;
+
+/** Load the optional compiled Pro module (`out/pro`). Present only in the
+ *  official build from the private aterm-pro repo; absent in the Community
+ *  build, where Pro commands fall back to an upsell. */
+function loadProModule(): ProModule | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("./pro") as ProModule;
+  } catch {
+    return null;
+  }
+}
 
 /** Guard for a Pro-only feature: returns true when unlocked, otherwise shows an
  *  upsell and returns false so the caller can bail out. */
@@ -1500,264 +1513,7 @@ function exec(file: string, args: string[], cwd?: string): Promise<string> {
   });
 }
 
-/** Launch the same prompt with several agents in parallel, each in its own
- *  git worktree so they don't stomp on each other. The user picks which
- *  agents to use and types the prompt; we create the worktrees, open a
- *  terminal per agent, fire up the CLI and (best-effort) paste the prompt. */
-async function launchParallel(): Promise<void> {
-  if (!requirePro("Comparativa paralela")) return;
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) {
-    notifyWarn(
-      "Agent Sessions: abre una carpeta antes de lanzar una comparativa."
-    );
-    return;
-  }
-  const repoRoot = folder.uri.fsPath;
-  try {
-    await exec("git", ["rev-parse", "--show-toplevel"], repoRoot);
-  } catch {
-    notifyWarn(
-      "Agent Sessions: la carpeta abierta no es un repo git (necesario para worktrees)."
-    );
-    return;
-  }
-
-  let providers: ProviderInfo[];
-  try {
-    providers = await runCli<ProviderInfo[]>(["providers"]);
-  } catch (e) {
-    notifyError(`Agent Sessions: ${(e as Error).message}`);
-    return;
-  }
-  const usable = providers.filter((p) => p.binaryFound);
-  if (usable.length < 2) {
-    notifyWarn(
-      "Agent Sessions: necesitas al menos 2 agentes en PATH para una comparativa."
-    );
-    return;
-  }
-
-  const picks = await vscode.window.showQuickPick(
-    usable.map((p) => ({ label: p.displayName, picked: true, info: p })),
-    {
-      canPickMany: true,
-      placeHolder: "Agentes para la comparativa (espacio para alternar, Enter para confirmar)",
-    }
-  );
-  if (!picks || picks.length === 0) return;
-
-  const prompt = await vscode.window.showInputBox({
-    title: "Prompt inicial (opcional)",
-    prompt: "Se intentará pegar en cada terminal tras 2 s. Vacío = solo lanza el shell.",
-    placeHolder: "p. ej. Refactoriza term/mod.rs para extraer la lógica de selección",
-  });
-  // showInputBox returns undefined on cancel — abort. Empty string is ok.
-  if (prompt === undefined) return;
-
-  // Worktrees live next to the repo so VS Code can open them as folders.
-  // Stamp the dir + branch with a short timestamp so re-running doesn't clash.
-  const stamp = Date.now().toString(36);
-  const parent = path.dirname(repoRoot);
-  const repoName = path.basename(repoRoot);
-
-  const launched: string[] = [];
-  for (const pick of picks) {
-    const id = pick.info.id;
-    const worktreePath = path.join(parent, `${repoName}-${id}-${stamp}`);
-    const branch = `agents/${id}-${stamp}`;
-    try {
-      await exec(
-        "git",
-        ["worktree", "add", "-B", branch, worktreePath, "HEAD"],
-        repoRoot
-      );
-    } catch (e) {
-      notifyWarn(
-        `Agent Sessions: no se pudo crear worktree para ${pick.info.displayName} (${(e as Error).message}).`
-      );
-      continue;
-    }
-
-    const terminal = vscode.window.createTerminal({
-      name: `⚡ ${pick.info.displayName}`,
-      cwd: worktreePath,
-      location: vscode.TerminalLocation.Editor,
-    });
-    terminal.show();
-    terminal.sendText(shellJoin(pick.info.newSessionArgv), true);
-    if (prompt.trim()) {
-      // Some TUIs (claude, codex) need a moment to render their input area
-      // before they'll accept text. A short delay is a pragmatic best-effort.
-      setTimeout(() => terminal.sendText(prompt, false), 2500);
-    }
-    launched.push(branch);
-  }
-
-  if (launched.length === 0) return;
-  notifyInfo(
-    `Agent Sessions: lanzados ${launched.length} agentes en worktrees bajo ${parent}. ` +
-      `Branches: ${launched.join(", ")}. Para limpiar: "Limpiar worktrees…" en la paleta.`
-  );
-}
-
-/** Open a Markdown report comparing the changes each comparison-worktree
- *  produced: a header per agent with `git diff --stat HEAD`, the commits the
- *  branch has on top of HEAD, and a link to open the worktree as a folder.
- *  Run after a `launchParallel` session to see at a glance who did what. */
-async function compareWorktrees(): Promise<void> {
-  if (!requirePro("Comparar worktrees")) return;
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) {
-    notifyWarn(
-      "Agent Sessions: abre primero la carpeta del repo."
-    );
-    return;
-  }
-  const repoRoot = folder.uri.fsPath;
-  let raw: string;
-  try {
-    raw = await exec("git", ["worktree", "list", "--porcelain"], repoRoot);
-  } catch (e) {
-    notifyError(`Agent Sessions: ${(e as Error).message}`);
-    return;
-  }
-  const trees: { path: string; branch: string }[] = [];
-  let cur: { path?: string; branch?: string } = {};
-  for (const line of raw.split("\n")) {
-    if (line.startsWith("worktree ")) cur = { path: line.slice(9) };
-    else if (line.startsWith("branch ")) {
-      cur.branch = line.slice(7).replace(/^refs\/heads\//, "");
-    } else if (line.trim() === "" && cur.path) {
-      if (cur.branch && cur.branch.startsWith("agents/")) {
-        trees.push({ path: cur.path, branch: cur.branch });
-      }
-      cur = {};
-    }
-  }
-  if (trees.length === 0) {
-    notifyInfo(
-      "Agent Sessions: no hay worktrees de comparativa para comparar."
-    );
-    return;
-  }
-
-  const sections: string[] = [`# Comparativa de agentes\n`];
-  sections.push(
-    `Repo: \`${repoRoot}\` · base: \`HEAD\` · ${trees.length} agente(s)\n`
-  );
-
-  for (const t of trees) {
-    sections.push(`---\n\n## ${t.branch}\n`);
-    sections.push(`\`${t.path}\`\n`);
-    // Working-tree diff against HEAD (uncommitted edits inside the worktree).
-    try {
-      const stat = (
-        await exec("git", ["diff", "--stat", "HEAD"], t.path)
-      ).trim();
-      if (stat) {
-        sections.push(`\n### Cambios sin commit\n\n\`\`\`\n${stat}\n\`\`\`\n`);
-      }
-    } catch {
-      /* ignore: empty diff or missing repo */
-    }
-    // Commits the branch added on top of HEAD (from the launch base).
-    try {
-      const baseSha = (
-        await exec("git", ["rev-parse", "HEAD"], repoRoot)
-      ).trim();
-      const log = (
-        await exec(
-          "git",
-          ["log", "--oneline", `${baseSha}..HEAD`],
-          t.path
-        )
-      ).trim();
-      if (log) {
-        sections.push(`\n### Commits sobre HEAD\n\n\`\`\`\n${log}\n\`\`\`\n`);
-      }
-    } catch {
-      /* ignore */
-    }
-    sections.push(
-      `\n[Abrir worktree](command:vscode.openFolder?${encodeURIComponent(
-        JSON.stringify([vscode.Uri.file(t.path), { forceNewWindow: true }])
-      )})\n`
-    );
-  }
-
-  const doc = await vscode.workspace.openTextDocument({
-    content: sections.join("\n"),
-    language: "markdown",
-  });
-  await vscode.window.showTextDocument(doc, { preview: true });
-}
-
-/** List worktrees with the `agents/` branch prefix and offer to delete the
- *  ones the user selects. Soft cleanup: prunes worktrees and deletes branches,
- *  never touches committed work. */
-async function cleanupWorktrees(): Promise<void> {
-  if (!requirePro("Limpiar worktrees")) return;
-  const folder = vscode.workspace.workspaceFolders?.[0];
-  if (!folder) {
-    notifyWarn(
-      "Agent Sessions: abre primero la carpeta del repo."
-    );
-    return;
-  }
-  const repoRoot = folder.uri.fsPath;
-  let raw: string;
-  try {
-    raw = await exec("git", ["worktree", "list", "--porcelain"], repoRoot);
-  } catch (e) {
-    notifyError(`Agent Sessions: ${(e as Error).message}`);
-    return;
-  }
-  const trees: { path: string; branch: string }[] = [];
-  let cur: { path?: string; branch?: string } = {};
-  for (const line of raw.split("\n")) {
-    if (line.startsWith("worktree ")) cur = { path: line.slice(9) };
-    else if (line.startsWith("branch ")) {
-      cur.branch = line.slice(7).replace(/^refs\/heads\//, "");
-    } else if (line.trim() === "" && cur.path) {
-      if (cur.branch && cur.branch.startsWith("agents/")) {
-        trees.push({ path: cur.path, branch: cur.branch });
-      }
-      cur = {};
-    }
-  }
-  if (trees.length === 0) {
-    notifyInfo(
-      "Agent Sessions: no hay worktrees de comparativa que limpiar."
-    );
-    return;
-  }
-  const picks = await vscode.window.showQuickPick(
-    trees.map((t) => ({
-      label: `$(trash) ${t.branch}`,
-      description: t.path,
-      tree: t,
-    })),
-    {
-      canPickMany: true,
-      placeHolder: "Worktrees a eliminar (espacio para marcar)",
-    }
-  );
-  if (!picks || picks.length === 0) return;
-  for (const p of picks) {
-    try {
-      await exec("git", ["worktree", "remove", "--force", p.tree.path], repoRoot);
-      await exec("git", ["branch", "-D", p.tree.branch], repoRoot);
-    } catch (e) {
-      notifyWarn(
-        `Agent Sessions: no se pudo eliminar ${p.tree.branch} (${(e as Error).message}).`
-      );
-    }
-  }
-  notifyInfo(
-    `Agent Sessions: limpiados ${picks.length} worktree(s).`
-  );
-}
+// Pro: comparativa paralela (worktrees) — implementada en el módulo privado aterm-pro.
 
 /** "Smart" launch: pick the provider the user most recently used in (or near)
  *  the current workspace folder. Falls back to the most-used provider overall
@@ -3208,180 +2964,7 @@ async function searchContent(view: SessionsView): Promise<void> {
 
 // ── Launch templates ────────────────────────────────────────────────────────
 
-interface LaunchTemplate {
-  id: string;
-  name: string;
-  provider: string;
-  prompt?: string;
-  cwd?: string;
-  tags?: string[];
-}
-
-/** Save a launch template: name, provider, optional prompt, optional tags and
- *  an optional pinned cwd. Then it shows up in `runTemplate` for one-click
- *  relaunch. */
-async function saveTemplate(view: SessionsView): Promise<void> {
-  if (!requirePro("Plantillas de lanzamiento")) return;
-  let providers: ProviderInfo[];
-  try {
-    providers = await runCli<ProviderInfo[]>(["providers"]);
-  } catch (e) {
-    notifyError(`Agent Sessions: ${(e as Error).message}`);
-    return;
-  }
-  const usable = providers.filter((p) => p.binaryFound);
-  if (usable.length === 0) {
-    notifyWarn(
-      "Agent Sessions: ningún agente disponible para asociar a la plantilla."
-    );
-    return;
-  }
-  const name = await vscode.window.showInputBox({
-    title: "Nombre de la plantilla",
-    placeHolder: "p. ej. Revisión rápida con Claude",
-  });
-  if (!name || !name.trim()) return;
-  const pick = await vscode.window.showQuickPick(
-    usable.map((p) => ({ label: p.displayName, info: p })),
-    { placeHolder: "Proveedor" }
-  );
-  if (!pick) return;
-  const prompt = await vscode.window.showInputBox({
-    title: "Prompt inicial (opcional)",
-    placeHolder: "Vacío = sólo lanza el agente",
-  });
-  if (prompt === undefined) return;
-  const tagsRaw = await vscode.window.showInputBox({
-    title: "Etiquetas de la plantilla (opcional)",
-    placeHolder: "separadas por coma o espacio",
-  });
-  if (tagsRaw === undefined) return;
-  const tags = parseTagInput(tagsRaw);
-  // Pin a directory, or leave unset so runTemplate asks at launch time. (The
-  // "no cwd" choice can't be persisted distinctly — the store omits an absent
-  // cwd — so it collapses to "ask on run", which is the sensible default.)
-  const cwd = await pickLaunchCwd(view, pick.info.id);
-  if (cwd === undefined) return; // cancelled
-  const id = `tpl-${Date.now().toString(36)}`;
-  const tpl: LaunchTemplate = {
-    id,
-    name: name.trim(),
-    provider: pick.info.id,
-    prompt: prompt.trim() === "" ? undefined : prompt,
-    cwd: cwd ?? undefined,
-    tags: tags.length ? tags : undefined,
-  };
-  try {
-    await runCli(["templates-set", id], JSON.stringify(tpl));
-    notifyInfo(
-      `Agent Sessions: plantilla "${tpl.name}" guardada.`
-    );
-  } catch (e) {
-    notifyError(
-      `Agent Sessions: no se pudo guardar (${(e as Error).message}).`
-    );
-  }
-}
-
-async function runTemplate(view: SessionsView): Promise<void> {
-  if (!requirePro("Plantillas de lanzamiento")) return;
-  let templates: LaunchTemplate[];
-  try {
-    templates = (await runCli<LaunchTemplate[]>(["templates-get"])) || [];
-  } catch (e) {
-    notifyError(`Agent Sessions: ${(e as Error).message}`);
-    return;
-  }
-  if (templates.length === 0) {
-    notifyInfo(
-      "Agent Sessions: aún no tienes plantillas. Usa “Guardar plantilla…”."
-    );
-    return;
-  }
-  const pick = await vscode.window.showQuickPick(
-    templates.map((t) => ({
-      label: `$(rocket) ${t.name}`,
-      description: [t.provider, ...(t.tags ?? []).map((x) => `#${x}`)].join(" · "),
-      detail: t.prompt
-        ? t.prompt.length > 80
-          ? t.prompt.slice(0, 80) + "…"
-          : t.prompt
-        : "(sin prompt)",
-      tpl: t,
-    })),
-    { placeHolder: "Plantilla a lanzar", matchOnDescription: true }
-  );
-  if (!pick) return;
-  const t = pick.tpl;
-  // Resolve the argv for the chosen provider.
-  let providers: ProviderInfo[];
-  try {
-    providers = await runCli<ProviderInfo[]>(["providers"]);
-  } catch (e) {
-    notifyError(`Agent Sessions: ${(e as Error).message}`);
-    return;
-  }
-  const info = providers.find((p) => p.id === t.provider);
-  if (!info || !info.binaryFound) {
-    notifyWarn(
-      `Agent Sessions: el binario de ${t.provider} no está disponible.`
-    );
-    return;
-  }
-  // Templates without a pinned cwd ask where to launch (instead of falling
-  // back to no directory).
-  let cwd = t.cwd;
-  if (!cwd) {
-    const picked = await pickLaunchCwd(view, t.provider);
-    if (picked === undefined) return; // cancelled
-    cwd = picked ?? undefined;
-  }
-  const terminal = launch(`🚀 ${t.name.slice(0, 30)}`, cwd, info.newSessionArgv);
-  if (terminal && t.prompt) {
-    setTimeout(() => terminal.sendText(t.prompt!, false), 2500);
-  }
-}
-
-async function manageTemplates(): Promise<void> {
-  if (!requirePro("Plantillas de lanzamiento")) return;
-  let templates: LaunchTemplate[];
-  try {
-    templates = (await runCli<LaunchTemplate[]>(["templates-get"])) || [];
-  } catch (e) {
-    notifyError(`Agent Sessions: ${(e as Error).message}`);
-    return;
-  }
-  if (templates.length === 0) {
-    notifyInfo(
-      "Agent Sessions: no hay plantillas que gestionar."
-    );
-    return;
-  }
-  const picks = await vscode.window.showQuickPick(
-    templates.map((t) => ({
-      label: `$(trash) ${t.name}`,
-      description: t.provider,
-      tpl: t,
-    })),
-    {
-      canPickMany: true,
-      placeHolder: "Plantillas a eliminar (espacio para marcar)",
-    }
-  );
-  if (!picks || picks.length === 0) return;
-  for (const p of picks) {
-    try {
-      await runCli(["templates-delete", p.tpl.id]);
-    } catch (e) {
-      notifyWarn(
-        `Agent Sessions: no se pudo borrar ${p.tpl.name} (${(e as Error).message}).`
-      );
-    }
-  }
-  notifyInfo(
-    `Agent Sessions: borradas ${picks.length} plantilla(s).`
-  );
-}
+// Pro: plantillas de lanzamiento — implementadas en el módulo privado aterm-pro.
 
 // ── Catalog backup / restore (cross-machine) ────────────────────────────────
 
@@ -4010,7 +3593,7 @@ async function showProjectCommands(view: SessionsView, cwd?: string): Promise<vo
   });
   items.push({
     label: "$(rocket) Lanzar plantilla…",
-    run: () => runTemplate(view),
+    run: () => void vscode.commands.executeCommand("agentSessions.runTemplate"),
   });
 
   const pick = await vscode.window.showQuickPick(items, {
@@ -4032,6 +3615,36 @@ export function activate(context: vscode.ExtensionContext): void {
   license = new LicenseService(context);
   license.startTrialIfNeeded();
   const view = new SessionsView(context);
+
+  // Open-core wiring: expose the helper surface to the optional Pro module and
+  // build a delegator that gates by licence, then by module presence.
+  const proApi: ProApi = {
+    runCli,
+    exec,
+    shellJoin,
+    launch,
+    notifyInfo: (m) => {
+      notifyInfo(m);
+    },
+    notifyWarn: (m) => {
+      notifyWarn(m);
+    },
+    notifyError,
+    pickLaunchCwd: (id) => pickLaunchCwd(view, id),
+    parseTagInput,
+  };
+  const proModule = loadProModule();
+  const runPro =
+    (method: keyof ProModule, feature: string) => async (): Promise<void> => {
+      if (!requirePro(feature)) return;
+      if (!proModule) {
+        notifyInfo(
+          `Agent Sessions: «${feature}» requiere la edición Pro (no incluida en esta build Community).`
+        );
+        return;
+      }
+      await proModule[method](proApi);
+    };
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(SessionsView.viewType, view, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -4062,9 +3675,18 @@ export function activate(context: vscode.ExtensionContext): void {
         if (c) addProjectToWorkspace(c);
       }
     ),
-    vscode.commands.registerCommand("agentSessions.launchParallel", launchParallel),
-    vscode.commands.registerCommand("agentSessions.compareWorktrees", compareWorktrees),
-    vscode.commands.registerCommand("agentSessions.cleanupWorktrees", cleanupWorktrees),
+    vscode.commands.registerCommand(
+      "agentSessions.launchParallel",
+      runPro("launchParallel", "Comparativa paralela")
+    ),
+    vscode.commands.registerCommand(
+      "agentSessions.compareWorktrees",
+      runPro("compareWorktrees", "Comparar worktrees")
+    ),
+    vscode.commands.registerCommand(
+      "agentSessions.cleanupWorktrees",
+      runPro("cleanupWorktrees", "Limpiar worktrees")
+    ),
     vscode.commands.registerCommand("agentSessions.backupCatalog", backupCatalog),
     vscode.commands.registerCommand("agentSessions.restoreCatalog", () =>
       restoreCatalog(view)
@@ -4072,13 +3694,18 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("agentSessions.searchContent", () =>
       searchContent(view)
     ),
-    vscode.commands.registerCommand("agentSessions.runTemplate", () =>
-      runTemplate(view)
+    vscode.commands.registerCommand(
+      "agentSessions.runTemplate",
+      runPro("runTemplate", "Plantillas de lanzamiento")
     ),
-    vscode.commands.registerCommand("agentSessions.saveTemplate", () =>
-      saveTemplate(view)
+    vscode.commands.registerCommand(
+      "agentSessions.saveTemplate",
+      runPro("saveTemplate", "Plantillas de lanzamiento")
     ),
-    vscode.commands.registerCommand("agentSessions.manageTemplates", manageTemplates),
+    vscode.commands.registerCommand(
+      "agentSessions.manageTemplates",
+      runPro("manageTemplates", "Plantillas de lanzamiento")
+    ),
     vscode.commands.registerCommand("agentSessions.manageTagCatalog", () =>
       manageTagCatalog(view)
     ),

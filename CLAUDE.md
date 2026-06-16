@@ -213,8 +213,18 @@ construye el sidecar para esa plataforma y lo empaqueta en el `.vsix` bajo
   Comandos `activateLicense`/`proStatus` (+ `debugPro` para QA, quitar antes del
   release público). Emisión de claves con `scripts/sign-license.mjs`
   (`keygen`/`sign`/`verify`); la privada `license-private.pem` es secreto
-  (gitignored). Pendiente: `BUY_URL` real + split de repos (mover el source Pro a
-  un repo privado para que no sea recompilable desde el OSS).
+  (gitignored). Pendiente: `BUY_URL` real.
+- ✅ **Split open-core (público Community ↔ privado Pro)**: el repo público es la
+  **Community Edition**. El *source* de las features Pro (comparativa paralela y
+  plantillas) ya **no vive en el público**: se movió al repo privado
+  `../aterm-pro`. Contrato en `src/pro-api.d.ts` (interfaces `ProApi` que el core
+  expone + `ProModule` que el privado implementa); `extension.ts` carga
+  dinámicamente `require("./pro")` (presente solo en la build oficial) y, si
+  falta, las acciones Pro muestran «edición Community». `aterm-pro/` tiene el
+  módulo `pro/index.ts`, su `tsconfig` (emite plano a `out/pro/` del público) y
+  `build.sh` (compila público + Pro y empaqueta el `.vsix` oficial). Topología
+  hermana `../aterm` por defecto (convertible a git submodule). El history MIT
+  previo conserva esas features; el split protege el desarrollo futuro.
 - ⏳ **Fase 5 (render GPU)**: no hecha por diseño — opcional, solo si el throughput
   lo justifica (ver roadmap).
 - ⏳ **Pendientes menores**: import solo a Claude (el `.zip` es formato Claude);
