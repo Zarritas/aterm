@@ -50,11 +50,15 @@ aterm/                         # workspace Cargo
 │               ├── mod.rs     #   TermInstance: PTY + Term + EventLoop + selección/búsqueda
 │               ├── render.rs  #   grid de celdas → egui (EL GRUESO)
 │               └── input.rs   #   tecla → bytes de escape · mouse_report SGR/X10
-└── vscode-extension/          # 2ª UI: extensión de VS Code (TypeScript)
-    ├── src/extension.ts       #   WebviewView provider + reanudar en terminal + metadata
-    ├── media/webview/         #   index.html + main.css + main.js (UI del panel)
-    └── scripts/build-vsix.sh  #   build por target → bundle del sidecar dentro del .vsix
 ```
+
+> **La extensión de VS Code vive ahora en un repo aparte:**
+> [`Aterm-labs/agent-sessions`](https://github.com/Aterm-labs/agent-sessions)
+> (la 2ª UI). Consume este repo como **git submodule** (`./aterm`) para compilar
+> el sidecar `agent-sessions-cli`. Su edición **Pro** (open-core) está en el repo
+> privado `aterm-pro`, y la landing en `aterm-web`. Lo que sigue describiendo la
+> extensión en este documento es historia/contexto; el código y su doc viva
+> están en esos repos.
 
 **Segunda vía de UI (VS Code).** El mismo core `agent-sessions` alimenta dos
 frontends: la app nativa `aterm` y una **extensión de VS Code**. En el editor el
