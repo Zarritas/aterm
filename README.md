@@ -32,7 +32,7 @@ cargo run -p aterm
 
 - [`agent-sessions`](https://github.com/Aterm-labs/agent-sessions) — the VS Code
   extension (second UI). Consumes this repo as a git submodule for the sidecar.
-- `aterm-pro` (private) — the Pro module for the extension (open-core).
+- `agent-sessions-pro` (private) — the Pro module for the extension (open-core).
 - [`aterm-web`](https://github.com/Aterm-labs/aterm-web) — the product landing.
 
 ## License
