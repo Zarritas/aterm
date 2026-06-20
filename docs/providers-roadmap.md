@@ -19,10 +19,19 @@ dificultad, para decidir el siguiente.
 | Codex | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | JSONL | provider completo |
 | Gemini CLI | `~/.gemini/tmp/<projectId>/chats/session-*.jsonl` (+ `projects.json`) | JSONL | 1ª línea metadatos |
 | OpenCode | SQLite vía `opencode session list --format json` | SQLite/CLI | read-only por CLI |
+| Qwen Code | `~/.qwen/projects/<encoded-cwd>/chats/<id>.jsonl` | JSONL | estilo Claude; `message.parts[].text` |
+| Goose | SQLite vía `goose session list/export --format json` | SQLite/CLI | preview por `export`; ISO timestamps |
+| Factory Droid | `~/.factory/sessions/<encoded-cwd>/<id>.jsonl` | JSONL | `session_start` + `message`; uso pleno **requiere suscripción** |
 
 Patrón: cada proveedor implementa el trait `AgentProvider` en
 `crates/agent-sessions/src/providers/*.rs` y se registra en `providers/mod.rs`.
 El parseo de turnos usa un `TurnExtractor` + los helpers de `extract.rs`.
+
+> **Implementados (2026-06-20)**: Qwen Code, Goose y Factory Droid (ver tabla de
+> soportados). Lecciones al hacerlo: los catálogos de terceros se equivocaban en
+> el formato — **Goose es SQLite (no JSONL)** y se integró por su CLI; **Qwen no
+> usa el layout de Gemini** sino uno estilo Claude (`projects/<cwd>/chats/`).
+> Confirmar siempre contra una sesión real.
 
 ## Candidatos — 🟢 sencillos (JSON/JSONL, mismo patrón que los actuales)
 
@@ -32,10 +41,7 @@ el esquema** (estructura de cada línea, rol, cómo recuperar el cwd).
 
 | Proveedor | Vendor | Ruta (verificar) | Formato | Comentario |
 |---|---|---|---|---|
-| **Qwen Code** | Alibaba | `~/.qwen/tmp/*/chats/session-*.json(l)` | JSON/JSONL | Fork de Gemini CLI **divergido desde v0.1**: probablemente parecido a `gemini.rs`, pero **confirmar** extensión y si mantiene `projects.json`. |
-| **Factory Droid** | Factory | `~/.factory/sessions` (por workspace slug) | JSONL | #1 en Terminal-Bench; en auge. |
 | **Kimi Code** | Moonshot | `~/.kimi/sessions/*/*/wire.jsonl` | JSONL | esquema «wire» propio: confirmar roles/contenido. |
-| **Goose** | Block | `~/.local/share/goose/sessions` | JSONL | reutiliza claves de modelo existentes; confirmar layout. |
 | **Pi / OpenClaw / Vibe (Mistral) / Clawdbot** | varios | `~/.pi/agent/sessions`, `~/.openclaw/agents/*/sessions`, `~/.vibe/logs/session/*/messages.jsonl`, `~/.clawdbot/sessions` | JSONL | nicho; mismo patrón si interesa. |
 
 ## Candidatos — 🟡 medios (SQLite o mixto; patrón OpenCode)
