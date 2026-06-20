@@ -1369,6 +1369,8 @@ fn provider_color(id: &str) -> egui::Color32 {
         "opencode" => p.sapphire,
         "gemini" => p.mauve,
         "qwen" => p.teal,
+        "goose" => p.yellow,
+        "factory" => p.red,
         _ => p.lavender,
     }
 }

@@ -417,7 +417,7 @@ fn parse_session_header(jsonl: &Path) -> SessionHeader {
 }
 
 /// "2026-06-04T10:00:00.000Z" -> unix seconds, without a chrono dependency.
-fn parse_iso_seconds(iso: &str) -> Option<f64> {
+pub(crate) fn parse_iso_seconds(iso: &str) -> Option<f64> {
     let date = iso.get(0..10)?;
     let time = iso.get(11..19)?;
     let mut dp = date.split('-');

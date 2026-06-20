@@ -1,6 +1,8 @@
 pub mod claude;
 pub mod codex;
+pub mod factory;
 pub mod gemini;
+pub mod goose;
 pub mod opencode;
 pub mod qwen;
 
@@ -14,5 +16,7 @@ pub fn all_providers() -> Vec<Box<dyn AgentProvider>> {
         Box::new(opencode::OpencodeProvider::new()),
         Box::new(gemini::GeminiProvider::new()),
         Box::new(qwen::QwenProvider::new()),
+        Box::new(goose::GooseProvider::new()),
+        Box::new(factory::FactoryProvider::new()),
     ]
 }

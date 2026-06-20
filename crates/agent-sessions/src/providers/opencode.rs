@@ -168,8 +168,13 @@ impl AgentProvider for OpencodeProvider {
 
 /// Run `bin args..` from the home dir with a hard timeout. The child is
 /// spawned on a helper thread so a hung CLI can't wedge the scan; on timeout
-/// it is killed and an error returned.
-fn run_with_timeout(bin: &str, args: &[&str], timeout: Duration) -> Result<String, String> {
+/// it is killed and an error returned. Shared with other CLI-backed providers
+/// (e.g. goose).
+pub(crate) fn run_with_timeout(
+    bin: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<String, String> {
     let mut cmd = Command::new(bin);
     cmd.args(args)
         .current_dir(dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
