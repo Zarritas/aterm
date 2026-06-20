@@ -2,6 +2,7 @@ pub mod claude;
 pub mod codex;
 pub mod gemini;
 pub mod opencode;
+pub mod qwen;
 
 use crate::provider::AgentProvider;
 
@@ -12,5 +13,6 @@ pub fn all_providers() -> Vec<Box<dyn AgentProvider>> {
         Box::new(codex::CodexProvider::new()),
         Box::new(opencode::OpencodeProvider::new()),
         Box::new(gemini::GeminiProvider::new()),
+        Box::new(qwen::QwenProvider::new()),
     ]
 }
