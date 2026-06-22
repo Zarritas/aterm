@@ -107,14 +107,13 @@ fn scan() {
             }
             sessions.append(&mut ss);
         }
+        // Quota: primero la fuente NATIVA del proveedor (Claude escribe
+        // `~/.claude/rate-limits-cache.json`); si falta, la calculamos NOSOTROS
+        // con el endpoint oficial de uso de Anthropic + nuestro propio cache (sin
+        // depender de plugins de terceros como claude-hud).
         let q = p.quota().or_else(|| {
-            // The vendor reads `~/.claude/rate-limits-cache.json`, which only
-            // materialises after Claude bumps into a real rate-limit headers
-            // from the server. Fall back to the `claude-hud` plugin's cache
-            // (`~/.claude/plugins/claude-hud/.usage-cache.json`) so the panel
-            // shows the 5h / 7d windows even on lightly-used accounts.
             if p.id() == "claude" {
-                claude_hud_fallback_quota()
+                claude_oauth_usage_quota()
             } else {
                 None
             }
@@ -902,76 +901,174 @@ fn templates_delete(id: Option<&String>) {
     emit(&serde_json::Value::Null);
 }
 
-// ── Claude rate-limit fallback via the `claude-hud` plugin ────────────────
+// ── Claude usage via the official OAuth usage endpoint (self-contained) ────
 //
-// Claude only writes its own `rate-limits-cache.json` when the server returns
-// fresh limit info — many accounts never see that file. The third-party
-// `claude-hud` plugin (https://github.com/jarrodwatts/claude-hud), if
-// installed, keeps its own usage cache that *does* update regularly. We
-// piggyback on it when our preferred source is missing so the panel can
-// still show the 5h / 7d pills. Read-only and best-effort: any parse
-// failure returns None and the pills just stay hidden.
+// Replicates what plugins like `claude-hud` do, WITHOUT depending on them:
+// reads Claude's own OAuth token (`~/.claude/.credentials.json`), queries the
+// official Anthropic usage endpoint and caches the result (~5 min) so we don't
+// hit the API on every scan. Read-only, best-effort. The token is only ever
+// sent to api.anthropic.com and is passed to curl via a 0600 config file (kept
+// out of the process arg list); expired tokens are ignored.
 
-fn claude_hud_fallback_quota() -> Option<ProviderQuota> {
-    let path = home_dir()
-        .join(".claude/plugins/claude-hud/.usage-cache.json");
-    let raw = std::fs::read_to_string(&path).ok()?;
+const USAGE_CACHE_TTL_MS: i64 = 5 * 60_000;
+
+fn usage_cache_path() -> PathBuf {
+    home_dir().join(".config/aterm/usage-cache.json")
+}
+
+fn claude_config_dir() -> PathBuf {
+    std::env::var("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir().join(".claude"))
+}
+
+/// Claude's OAuth access token, only when present and not expired.
+fn claude_oauth_token() -> Option<String> {
+    let raw =
+        std::fs::read_to_string(claude_config_dir().join(".credentials.json")).ok()?;
     let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    // Prefer `data`, then `lastGoodData` (kept by the plugin when the live
-    // fetch fails). Either has `fiveHour` / `sevenDay` as integer %.
-    let data = v
-        .get("data")
-        .filter(|d| d.get("fiveHour").is_some() || d.get("sevenDay").is_some())
-        .or_else(|| v.get("lastGoodData"))?;
-
-    let percent = |key: &str| -> Option<f64> {
-        data.get(key).and_then(|x| x.as_f64()).or_else(|| {
-            data.get(key)
-                .and_then(|x| x.as_i64())
-                .map(|n| n as f64)
-        })
-    };
-    let reset = |key: &str| -> Option<u64> {
-        data.get(key)
-            .and_then(|x| x.as_str())
-            .and_then(parse_iso8601_to_unix)
-    };
-
-    let mut windows = Vec::new();
-    if let Some(p) = percent("fiveHour") {
-        windows.push(QuotaWindow {
-            label: "session".to_string(),
-            used_percent: p,
-            resets_at: reset("fiveHourResetAt"),
-        });
+    let oauth = v.get("claudeAiOauth")?;
+    let token = oauth.get("accessToken")?.as_str()?.to_string();
+    if token.is_empty() {
+        return None;
     }
-    if let Some(p) = percent("sevenDay") {
-        windows.push(QuotaWindow {
-            label: "weekly".to_string(),
-            used_percent: p,
-            resets_at: reset("sevenDayResetAt"),
-        });
+    // `expiresAt` is unix ms; if present and already past, don't use the token.
+    if let Some(exp) = oauth.get("expiresAt").and_then(|x| x.as_i64()) {
+        if exp > 0 && exp <= now_ms() {
+            return None;
+        }
+    }
+    Some(token)
+}
+
+fn quota_from_cache_value(v: &serde_json::Value) -> Option<ProviderQuota> {
+    let windows: Vec<QuotaWindow> = v
+        .get("windows")?
+        .as_array()?
+        .iter()
+        .filter_map(|w| {
+            Some(QuotaWindow {
+                label: w.get("label")?.as_str()?.to_string(),
+                used_percent: w.get("used_percent")?.as_f64()?,
+                resets_at: w.get("resets_at").and_then(|x| x.as_u64()),
+            })
+        })
+        .collect();
+    if windows.is_empty() {
+        return None;
+    }
+    Some(ProviderQuota {
+        provider: "claude".to_string(),
+        windows,
+        as_of: v.get("as_of").and_then(|x| x.as_f64()),
+    })
+}
+
+/// Read our own usage cache. With `fresh_only`, returns None past the TTL.
+fn read_usage_cache(fresh_only: bool) -> Option<ProviderQuota> {
+    let raw = std::fs::read_to_string(usage_cache_path()).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    if fresh_only {
+        let ts = v.get("ts_ms").and_then(|x| x.as_i64()).unwrap_or(0);
+        if now_ms() - ts > USAGE_CACHE_TTL_MS {
+            return None;
+        }
+    }
+    quota_from_cache_value(&v)
+}
+
+fn write_usage_cache(q: &ProviderQuota) {
+    let windows: Vec<serde_json::Value> = q
+        .windows
+        .iter()
+        .map(|w| {
+            serde_json::json!({
+                "label": w.label,
+                "used_percent": w.used_percent,
+                "resets_at": w.resets_at,
+            })
+        })
+        .collect();
+    let obj = serde_json::json!({ "ts_ms": now_ms(), "as_of": q.as_of, "windows": windows });
+    let path = usage_cache_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, obj.to_string());
+}
+
+/// GET https://api.anthropic.com/api/oauth/usage with the OAuth token. The token
+/// goes in a 0600 curl config file (not the arg list), removed right after.
+fn fetch_oauth_usage(token: &str) -> Option<String> {
+    let cfg_path =
+        std::env::temp_dir().join(format!("aterm-usage-{}.curl", std::process::id()));
+    let cfg = format!(
+        "silent\nlocation\nmax-time = 8\nurl = \"https://api.anthropic.com/api/oauth/usage\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\n"
+    );
+    std::fs::write(&cfg_path, &cfg).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&cfg_path, std::fs::Permissions::from_mode(0o600));
+    }
+    let out = std::process::Command::new("curl").arg("-K").arg(&cfg_path).output();
+    let _ = std::fs::remove_file(&cfg_path);
+    let out = out.ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+fn parse_oauth_usage(body: &str) -> Option<ProviderQuota> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let mut windows = Vec::new();
+    for (key, label) in [("five_hour", "session"), ("seven_day", "weekly")] {
+        if let Some(w) = v.get(key) {
+            if let Some(u) = w.get("utilization").and_then(|x| x.as_f64()) {
+                windows.push(QuotaWindow {
+                    label: label.to_string(),
+                    used_percent: u.clamp(0.0, 100.0),
+                    resets_at: w
+                        .get("resets_at")
+                        .and_then(|x| x.as_str())
+                        .and_then(parse_iso8601_to_unix),
+                });
+            }
+        }
     }
     if windows.is_empty() {
         return None;
     }
-    let as_of = v
-        .get("timestamp")
-        .and_then(|t| t.as_i64())
-        .map(|ms| (ms as f64) / 1000.0);
     Some(ProviderQuota {
         provider: "claude".to_string(),
         windows,
-        as_of,
+        as_of: Some(now_ms() as f64 / 1000.0),
     })
 }
 
-/// Tiny ISO 8601 → unix-seconds parser. Accepts the shape that claude-hud
-/// writes: `YYYY-MM-DDTHH:MM:SS(.fff)?Z` (always UTC). Anything else returns
-/// None. Avoids pulling chrono just for this.
+/// Self-contained Claude usage: fresh cache → API refresh → stale cache.
+fn claude_oauth_usage_quota() -> Option<ProviderQuota> {
+    if let Some(q) = read_usage_cache(true) {
+        return Some(q);
+    }
+    let token = match claude_oauth_token() {
+        Some(t) => t,
+        None => return read_usage_cache(false), // sin token: último valor conocido
+    };
+    match fetch_oauth_usage(&token).and_then(|b| parse_oauth_usage(&b)) {
+        Some(q) => {
+            write_usage_cache(&q);
+            Some(q)
+        }
+        None => read_usage_cache(false), // API caída: último valor conocido
+    }
+}
+
+/// Tiny ISO 8601 → unix-seconds parser (`YYYY-MM-DDTHH:MM:SS(.fff)?Z`, UTC).
 fn parse_iso8601_to_unix(s: &str) -> Option<u64> {
     let b = s.as_bytes();
-    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' {
+    if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' {
         return None;
     }
     let year: i64 = s.get(0..4)?.parse().ok()?;
@@ -989,12 +1086,10 @@ fn parse_iso8601_to_unix(s: &str) -> Option<u64> {
     {
         return None;
     }
-    // Civil → days since 1970-01-01 (Howard Hinnant's algorithm).
     let y = if month <= 2 { year - 1 } else { year };
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = y - era * 400;
-    let m = month;
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + day - 1;
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = era * 146_097 + doe - 719_468;
     let secs = days * 86_400 + hour * 3_600 + minute * 60 + second;
