@@ -702,6 +702,59 @@ impl SessionPanel {
                 crate::theme::muted(ui, "Restaura un archivo .zip exportado (formato Claude).");
                 ui.add_space(6.0);
 
+                // Filesystem autocomplete with keyboard nav. KEY ORDER: the nav
+                // keys (Tab/↑/↓/Enter/Esc) must be consumed BEFORE the TextEdit
+                // is drawn, or the single-line edit eats Enter (loses focus) and
+                // Tab moves focus away first. We query focus from memory by a
+                // stable id, handle keys, then draw the field.
+                let field_id = ui.make_persistent_id("import-path-edit");
+                let popup_id = ui.make_persistent_id("import-autocomplete");
+                let candidates = {
+                    let trimmed = self.import_path.trim().to_string();
+                    if !trimmed.is_empty() && !std::path::Path::new(&trimmed).is_file() {
+                        path_candidates(&trimmed)
+                    } else {
+                        Vec::new()
+                    }
+                };
+                let n = candidates.len();
+                let focused = ui.memory(|m| m.has_focus(field_id));
+                if focused && n > 0 {
+                    ui.memory_mut(|m| m.open_popup(popup_id));
+                    let (down, up, enter, esc) = ui.input_mut(|i| {
+                        (
+                            i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                                || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                            i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                            i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                            i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        )
+                    });
+                    if down {
+                        self.import_ac_sel =
+                            Some(self.import_ac_sel.map_or(0, |i| (i + 1).min(n - 1)));
+                    }
+                    if up {
+                        self.import_ac_sel =
+                            self.import_ac_sel.map(|i| i.saturating_sub(1)).or(Some(0));
+                    }
+                    if esc {
+                        self.import_ac_sel = None;
+                        ui.memory_mut(|m| m.close_popup());
+                    }
+                    // Enter accepts the highlighted folder (default: the first):
+                    // fills the input and re-opens the popup with its children so
+                    // you can keep drilling down with Enter. Keeps field focus.
+                    if enter {
+                        let i = self.import_ac_sel.unwrap_or(0).min(n - 1);
+                        self.import_path = candidates[i].clone();
+                        self.import_ac_sel = Some(0);
+                        ui.memory_mut(|m| m.request_focus(field_id));
+                    }
+                } else if !focused {
+                    self.import_ac_sel = None;
+                }
+
                 // File field as a rounded pill with a leading icon.
                 let mut field_resp = None;
                 egui::Frame::none()
@@ -723,6 +776,7 @@ impl SessionPanel {
                                     field_resp = Some(
                                         ui.add(
                                             egui::TextEdit::singleline(&mut self.import_path)
+                                                .id(field_id)
                                                 .hint_text("ruta del .zip a importar")
                                                 .frame(false)
                                                 .desired_width(f32::INFINITY),
@@ -733,64 +787,11 @@ impl SessionPanel {
                         });
                     });
 
-                // Filesystem autocomplete as a FLOATING popup anchored under the
-                // field, so the suggestions don't push the form down.
                 if let Some(resp) = field_resp {
-                    let trimmed = self.import_path.trim().to_string();
-                    let candidates =
-                        if !trimmed.is_empty() && !std::path::Path::new(&trimmed).is_file() {
-                            path_candidates(&trimmed)
-                        } else {
-                            Vec::new()
-                        };
-                    let popup_id = ui.make_persistent_id("import-autocomplete");
-                    let n = candidates.len();
-                    // Typing exits keyboard-nav mode (stale highlight would point
-                    // at the wrong row once the candidate set changes).
+                    // Typing exits keyboard-nav mode (stale highlight otherwise).
                     if resp.changed() {
                         self.import_ac_sel = None;
                     }
-                    if resp.has_focus() && n > 0 {
-                        ui.memory_mut(|m| m.open_popup(popup_id));
-                        // Keyboard nav while the field is focused: Tab/↓ enters
-                        // the list and moves the highlight, ↑ moves up, Enter
-                        // accepts, Esc closes. Keys are consumed so focus stays.
-                        let (down, up, enter, esc) = ui.input_mut(|i| {
-                            (
-                                i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
-                                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
-                                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
-                                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
-                                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
-                            )
-                        });
-                        if down {
-                            self.import_ac_sel =
-                                Some(self.import_ac_sel.map_or(0, |i| (i + 1).min(n - 1)));
-                        }
-                        if up {
-                            self.import_ac_sel =
-                                self.import_ac_sel.map(|i| i.saturating_sub(1)).or(Some(0));
-                        }
-                        if esc {
-                            self.import_ac_sel = None;
-                            ui.memory_mut(|m| m.close_popup());
-                        }
-                        // Enter accepts the highlighted folder and fills the
-                        // input; the popup re-opens with that folder's children
-                        // and keeps the first one highlighted, so you can keep
-                        // drilling down by pressing Enter again.
-                        if enter {
-                            if let Some(i) = self.import_ac_sel {
-                                self.import_path = candidates[i.min(n - 1)].clone();
-                                self.import_ac_sel = Some(0);
-                                resp.request_focus();
-                            }
-                        }
-                    } else {
-                        self.import_ac_sel = None;
-                    }
-
                     let sel = self.import_ac_sel;
                     let mut picked = false;
                     egui::popup::popup_below_widget(
@@ -817,11 +818,9 @@ impl SessionPanel {
                                 });
                         },
                     );
-                    // Clicking a folder keeps the field focused so you can keep
-                    // drilling down without re-clicking the input.
                     if picked {
                         self.import_ac_sel = Some(0);
-                        resp.request_focus();
+                        ui.memory_mut(|m| m.request_focus(field_id));
                     }
                 }
 
