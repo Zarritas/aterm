@@ -524,14 +524,16 @@ impl SessionPanel {
             });
         }
 
-        // Group mode as a connected segmented control.
+        // Group mode as a connected segmented control. Text colour is set per
+        // state so the active segment stays readable on its accent fill.
         egui::Frame::none()
             .fill(spal.surface0)
             .rounding(crate::theme::RADIUS)
             .inner_margin(egui::Margin::same(2.0))
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                ui.visuals_mut().selection.bg_fill = spal.blue.gamma_multiply(0.30);
+                ui.spacing_mut().item_spacing.x = 2.0;
+                // Solid accent fill for the selected segment.
+                ui.visuals_mut().selection.bg_fill = spal.blue;
                 ui.visuals_mut().selection.stroke = egui::Stroke::NONE;
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = spal.surface1;
                 ui.horizontal(|ui| {
@@ -541,7 +543,15 @@ impl SessionPanel {
                         (GroupMode::Cascade, "Prov › Proy"),
                         (GroupMode::Group, "Grupos"),
                     ] {
-                        ui.selectable_value(&mut self.group_mode, mode, label);
+                        let selected = self.group_mode == mode;
+                        // Dark text on the bright accent when selected; muted
+                        // otherwise.
+                        let color = if selected { spal.crust } else { spal.overlay };
+                        let txt = egui::RichText::new(label).color(color);
+                        let txt = if selected { txt.strong() } else { txt };
+                        if ui.selectable_label(selected, txt).clicked() {
+                            self.group_mode = mode;
+                        }
                     }
                 });
             });
