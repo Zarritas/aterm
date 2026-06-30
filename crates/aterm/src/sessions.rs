@@ -214,6 +214,11 @@ pub struct SessionPanel {
     /// Whether the "delete by date" dialog is open, and its day-cutoff draft.
     delete_by_date_open: bool,
     delete_days: String,
+    /// "New session in several projects" dialog: open flag, chosen provider id,
+    /// and the set of selected project paths.
+    multi_open: bool,
+    multi_provider: String,
+    multi_selected: std::collections::HashSet<String>,
 }
 
 /// Draft fields for the "save a launch template" form.
@@ -271,6 +276,9 @@ impl Default for SessionPanel {
             selected: std::collections::HashSet::new(),
             delete_by_date_open: false,
             delete_days: "30".to_string(),
+            multi_open: false,
+            multi_provider: String::new(),
+            multi_selected: std::collections::HashSet::new(),
         }
     }
 }
@@ -501,6 +509,31 @@ impl SessionPanel {
                 self.select_mode = !self.select_mode;
                 if !self.select_mode {
                     self.selected.clear();
+                }
+            }
+            if ui
+                .button("✨")
+                .on_hover_text("Lanzar el agente recomendado (el más usado disponible)")
+                .clicked()
+            {
+                if let Some(argv) = self.recommended_argv() {
+                    action = Some(PanelAction::Open {
+                        argv,
+                        cwd: None,
+                        key: None,
+                    });
+                }
+            }
+            if ui
+                .button("Multi…")
+                .on_hover_text("Nueva sesión en varios proyectos")
+                .clicked()
+            {
+                self.multi_open = true;
+                if self.multi_provider.is_empty() {
+                    if let Some(p) = all_providers().iter().find(|p| p.detect()) {
+                        self.multi_provider = p.id().to_string();
+                    }
                 }
             }
         });
@@ -1142,6 +1175,9 @@ impl SessionPanel {
             action = Some(a);
         }
         self.delete_by_date_window(ui.ctx());
+        if let Some(a) = self.multi_window(ui.ctx()) {
+            action = Some(a);
+        }
 
         action
     }
@@ -1359,6 +1395,128 @@ impl SessionPanel {
         } else if cancel || !open {
             self.delete_by_date_open = false;
         }
+    }
+
+    /// The `new_session_argv` of the recommended agent: the detected provider
+    /// with the most recent session (smartLaunch).
+    fn recommended_argv(&self) -> Option<Vec<String>> {
+        let mut best: Option<(f64, Vec<String>)> = None;
+        for g in &self.groups {
+            if !g.provider.detect() {
+                continue;
+            }
+            let argv = g.provider.new_session_argv();
+            if argv.is_empty() {
+                continue;
+            }
+            let newest = g
+                .sessions
+                .iter()
+                .map(|s| s.last_activity)
+                .fold(f64::MIN, f64::max);
+            if best.as_ref().is_none_or(|(b, _)| newest > *b) {
+                best = Some((newest, argv));
+            }
+        }
+        best.map(|(_, argv)| argv)
+    }
+
+    /// "New session in several projects": pick a provider + project set, open a
+    /// fresh session in each (via `OpenMany`).
+    fn multi_window(&mut self, ctx: &egui::Context) -> Option<PanelAction> {
+        if !self.multi_open {
+            return None;
+        }
+        let providers: Vec<(String, String)> = all_providers()
+            .iter()
+            .filter(|p| p.detect())
+            .map(|p| (p.id().to_string(), p.display_name().to_string()))
+            .collect();
+        let mut projects: Vec<String> = self
+            .groups
+            .iter()
+            .flat_map(|g| g.sessions.iter().filter_map(|s| s.cwd.clone()))
+            .collect();
+        projects.sort();
+        projects.dedup();
+
+        let mut open = true;
+        let mut launch = false;
+        let mut cancel = false;
+        egui::Window::new("Nueva sesión en varios proyectos")
+            .open(&mut open)
+            .resizable(true)
+            .default_size([420.0, 360.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Agente:");
+                    egui::ComboBox::from_id_salt("multi-prov")
+                        .selected_text(
+                            providers
+                                .iter()
+                                .find(|(id, _)| id == &self.multi_provider)
+                                .map(|(_, dn)| dn.as_str())
+                                .unwrap_or("—"),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (id, dn) in &providers {
+                                ui.selectable_value(&mut self.multi_provider, id.clone(), dn);
+                            }
+                        });
+                });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        for p in &projects {
+                            let mut checked = self.multi_selected.contains(p);
+                            if ui.checkbox(&mut checked, display_path(p)).clicked() {
+                                if checked {
+                                    self.multi_selected.insert(p.clone());
+                                } else {
+                                    self.multi_selected.remove(p);
+                                }
+                            }
+                        }
+                    });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let n = self.multi_selected.len();
+                    if ui
+                        .add_enabled(n > 0, egui::Button::new(format!("Lanzar en {n}")))
+                        .clicked()
+                    {
+                        launch = true;
+                    }
+                    if ui.button("Cancelar").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        let mut action = None;
+        if launch {
+            let argv = all_providers()
+                .iter()
+                .find(|p| p.id() == self.multi_provider)
+                .map(|p| p.new_session_argv())
+                .filter(|a| !a.is_empty());
+            if let Some(argv) = argv {
+                let opens: Vec<_> = self
+                    .multi_selected
+                    .iter()
+                    .map(|path| (argv.clone(), Some(PathBuf::from(path)), None))
+                    .collect();
+                if !opens.is_empty() {
+                    action = Some(PanelAction::OpenMany(opens));
+                }
+            }
+            self.multi_open = false;
+            self.multi_selected.clear();
+        } else if cancel || !open {
+            self.multi_open = false;
+        }
+        action
     }
 
     fn editor_window(&mut self, ctx: &egui::Context) {
