@@ -431,11 +431,28 @@ dependencies = [
  "agent-sessions",
  "alacritty_terminal",
  "arboard",
+ "aterm-pro",
+ "aterm-pro-api",
  "eframe",
  "egui",
  "libc",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "aterm-pro"
+version = "0.1.0"
+dependencies = [
+ "aterm-pro-api",
+ "egui",
+]
+
+[[package]]
+name = "aterm-pro-api"
+version = "0.1.0"
+dependencies = [
+ "egui",
 ]
 
 [[package]]

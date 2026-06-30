@@ -103,6 +103,15 @@ struct TabEdit {
     name: String,
 }
 
+/// A Pro/licence action requested from the chrome, deferred until after the
+/// panels so the handling code can borrow `self` (and the Pro module) freely.
+enum ProAction {
+    Parallel,
+    Compare,
+    Cleanup,
+    License,
+}
+
 /// Settings dialog categories (left-nav).
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum SettingsCat {
@@ -159,6 +168,24 @@ pub struct AtermApp {
     last_saved: String,
     /// When the session was last persisted (writes are throttled).
     last_save_at: std::time::Instant,
+    /// Pro features module (real with `--features pro`, Community stub else).
+    pro: Box<dyn aterm_pro_api::ProModule>,
+    /// Deferred PTY writes: `(tab id, bytes, fire-at)`. Used to inject a prompt
+    /// into a freshly-spawned agent after it has had time to start.
+    deferred_writes: Vec<(u64, Vec<u8>, std::time::Instant)>,
+    /// Transient status toast: `(message, shown-at)`.
+    toast: Option<(String, std::time::Instant)>,
+    /// Open Markdown report window: `(title, body)` (e.g. worktree compare).
+    report: Option<(String, String)>,
+    /// Whether the licence/upsell window is open.
+    license_open: bool,
+    /// Draft licence key in the licence window.
+    license_key_input: String,
+    /// Result message of the last activation attempt.
+    license_msg: Option<String>,
+    /// The current frame's egui context, stashed so `ProHost::open_agent` (which
+    /// has no `ctx` parameter) can spawn terminals. Set at the top of `update`.
+    egui_ctx: egui::Context,
 }
 
 impl Default for AtermApp {
@@ -189,18 +216,217 @@ impl Default for AtermApp {
             restore_pending: crate::persist::load(),
             last_saved: String::new(),
             last_save_at: std::time::Instant::now(),
+            pro: crate::pro::module(),
+            deferred_writes: Vec::new(),
+            toast: None,
+            report: None,
+            license_open: false,
+            license_key_input: String::new(),
+            license_msg: None,
+            egui_ctx: egui::Context::default(),
         }
     }
 }
 
+impl aterm_pro_api::ProHost for AtermApp {
+    fn providers(&self) -> Vec<aterm_pro_api::ProviderLite> {
+        agent_sessions::all_providers()
+            .iter()
+            .map(|p| aterm_pro_api::ProviderLite {
+                id: p.id().to_string(),
+                display_name: p.display_name().to_string(),
+                available: p.detect(),
+                new_session_argv: p.new_session_argv(),
+            })
+            .collect()
+    }
+
+    fn repo_root(&self) -> Option<std::path::PathBuf> {
+        let cwd = self
+            .tabs
+            .iter()
+            .find(|t| t.id == self.focused)
+            .and_then(|t| t.term.cwd().or_else(|| t.cwd.clone()))?;
+        let top = self
+            .exec_git(&["rev-parse", "--show-toplevel"], &cwd)
+            .ok()?;
+        let top = top.trim();
+        (!top.is_empty()).then(|| std::path::PathBuf::from(top))
+    }
+
+    fn exec_git(&self, args: &[&str], cwd: &std::path::Path) -> Result<String, String> {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+
+    fn open_agent(&mut self, argv: Vec<String>, cwd: std::path::PathBuf) -> Option<u64> {
+        let ctx = self.egui_ctx.clone();
+        self.open_tab(&ctx, argv, Some(cwd), None)
+    }
+
+    fn inject_prompt(&mut self, tab_id: u64, text: String, delay_ms: u64) {
+        let at = std::time::Instant::now() + std::time::Duration::from_millis(delay_ms);
+        self.deferred_writes.push((tab_id, text.into_bytes(), at));
+    }
+
+    fn notify(&mut self, message: String) {
+        self.toast = Some((message, std::time::Instant::now()));
+    }
+
+    fn show_report(&mut self, title: String, markdown: String) {
+        self.report = Some((title, markdown));
+    }
+
+    fn is_pro(&self) -> bool {
+        crate::license::is_pro()
+    }
+
+    fn open_buy(&self) {
+        crate::license::open_buy();
+    }
+}
+
 impl AtermApp {
+    /// Deliver any deferred PTY writes (prompt injection) whose timer elapsed,
+    /// and schedule a repaint for the soonest pending one.
+    fn flush_deferred_writes(&mut self, ctx: &egui::Context) {
+        if self.deferred_writes.is_empty() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let mut soonest: Option<std::time::Duration> = None;
+        let mut pending = std::mem::take(&mut self.deferred_writes);
+        pending.retain(|(tab_id, bytes, at)| {
+            if now >= *at {
+                if let Some(t) = self.tabs.iter().find(|t| t.id == *tab_id) {
+                    t.term.write(bytes);
+                }
+                false
+            } else {
+                let d = *at - now;
+                soonest = Some(soonest.map_or(d, |s| s.min(d)));
+                true
+            }
+        });
+        self.deferred_writes = pending;
+        if let Some(d) = soonest {
+            ctx.request_repaint_after(d);
+        }
+    }
+
+    /// The licence status / activation / upsell window.
+    fn license_window(&mut self, ctx: &egui::Context) {
+        if !self.license_open {
+            return;
+        }
+        let mut open = true;
+        let mut activate = false;
+        egui::Window::new("Aterm Pro — licencia")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                let status_line = match crate::license::status() {
+                    crate::license::Status::Licensed => "✔ Licencia Pro activa".to_string(),
+                    crate::license::Status::Trial { days_left } => {
+                        format!("⏳ Prueba: quedan {days_left} días")
+                    }
+                    crate::license::Status::Expired => {
+                        "✖ Prueba terminada — sin licencia".to_string()
+                    }
+                };
+                ui.label(status_line);
+                ui.separator();
+                ui.label("¿Tienes una clave de licencia? Actívala:");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.license_key_input)
+                        .hint_text("XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX")
+                        .desired_width(320.0),
+                );
+                if ui.button("Activar").clicked() {
+                    activate = true;
+                }
+                if let Some(msg) = &self.license_msg {
+                    ui.label(msg);
+                }
+                ui.separator();
+                ui.label("¿Aún no la tienes? Compra Aterm Pro:");
+                ui.horizontal(|ui| {
+                    if ui.button("Plan anual (mejor precio)").clicked() {
+                        crate::license::open_url(crate::license::BUY_URL_ANNUAL);
+                    }
+                    if ui.button("Plan mensual").clicked() {
+                        crate::license::open_url(crate::license::BUY_URL_MONTHLY);
+                    }
+                });
+            });
+        if activate {
+            let key = self.license_key_input.clone();
+            self.license_msg = Some(match crate::license::activate(&key) {
+                Ok(()) => "✔ Licencia activada. ¡Gracias!".to_string(),
+                Err(e) => format!("✖ {e}"),
+            });
+        }
+        self.license_open = open;
+    }
+
+    /// A scrollable Markdown-ish report window (worktree compare output).
+    fn report_window(&mut self, ctx: &egui::Context) {
+        let Some((title, body)) = self.report.clone() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new(title)
+            .collapsible(true)
+            .resizable(true)
+            .default_size([560.0, 420.0])
+            .open(&mut open)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(&body).monospace()).wrap());
+                });
+            });
+        if !open {
+            self.report = None;
+        }
+    }
+
+    /// A transient status toast pinned to the bottom of the window (~6 s).
+    fn toast_overlay(&mut self, ctx: &egui::Context) {
+        let Some((msg, at)) = self.toast.clone() else {
+            return;
+        };
+        if at.elapsed().as_secs_f32() > 6.0 {
+            self.toast = None;
+            return;
+        }
+        egui::Area::new(egui::Id::new("aterm-toast"))
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -16.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.label(msg);
+                });
+            });
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    }
+
+    /// Open (or focus, for a resumed session) a terminal tab. Returns the id of
+    /// the tab now in front, or `None` if the spawn failed.
     fn open_tab(
         &mut self,
         ctx: &egui::Context,
         argv: Vec<String>,
         cwd: Option<std::path::PathBuf>,
         key: Option<String>,
-    ) {
+    ) -> Option<u64> {
         // A resume whose session is already open just focuses that tab — never
         // resume the same transcript into two live agents.
         if let Some(k) = &key {
@@ -213,7 +439,7 @@ impl AtermApp {
             {
                 let id = t.id;
                 self.focus_tab(id);
-                return;
+                return Some(id);
             }
         }
 
@@ -245,8 +471,12 @@ impl AtermApp {
                 self.visible = vec![id];
                 self.focused = id;
                 self.focus_pending = true;
+                Some(id)
             }
-            Err(e) => eprintln!("aterm: failed to spawn terminal: {e}"),
+            Err(e) => {
+                eprintln!("aterm: failed to spawn terminal: {e}");
+                None
+            }
         }
     }
 
@@ -427,6 +657,15 @@ impl eframe::App for AtermApp {
         let mut pending_open: Option<(Vec<String>, Option<std::path::PathBuf>, Option<String>)> =
             None;
 
+        // Stash this frame's context so `ProHost::open_agent` (no ctx arg) can
+        // spawn terminals, then fire any prompt injections whose timer elapsed.
+        self.egui_ctx = ctx.clone();
+        self.flush_deferred_writes(ctx);
+
+        // Pro/licence actions requested from the chrome this frame, handled
+        // after the panels (the panel closures borrow `self`).
+        let mut pro_action: Option<ProAction> = None;
+
         // First frame: re-open the tabs from the previous session (needs `ctx`,
         // hence here and not in `default`). Names are reattached afterwards.
         if !self.restore_pending.is_empty() {
@@ -528,6 +767,26 @@ impl eframe::App for AtermApp {
                 if ui.button(">_").on_hover_text("Nueva shell").clicked() {
                     pending_open = Some((shell_argv(), shell_dir(), None));
                 }
+                ui.separator();
+                // Pro: parallel worktree compare. The ⚡ opens the launch
+                // dialog; the ▽ menu holds compare/cleanup.
+                if ui
+                    .button("⚡")
+                    .on_hover_text("Comparativa paralela (Pro): lanza N agentes en worktrees")
+                    .clicked()
+                {
+                    pro_action = Some(ProAction::Parallel);
+                }
+                ui.menu_button("▽", |ui| {
+                    if ui.button("Comparar worktrees").clicked() {
+                        pro_action = Some(ProAction::Compare);
+                        ui.close_menu();
+                    }
+                    if ui.button("Limpiar worktrees…").clicked() {
+                        pro_action = Some(ProAction::Cleanup);
+                        ui.close_menu();
+                    }
+                });
                 ui.separator();
                 let mut to_close = None;
                 let mut to_focus = None;
@@ -656,10 +915,18 @@ impl eframe::App for AtermApp {
                     self.request_close(id);
                 }
 
-                // Settings cog, pushed to the right edge of the header.
+                // Settings cog + licence badge, pushed to the right edge.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("⚙").on_hover_text("Ajustes").clicked() {
                         self.settings_open = true;
+                    }
+                    ui.separator();
+                    if ui
+                        .button(crate::license::badge())
+                        .on_hover_text("Estado de la licencia / activar Pro")
+                        .clicked()
+                    {
+                        pro_action = Some(ProAction::License);
                     }
                 });
             });
@@ -725,6 +992,24 @@ impl eframe::App for AtermApp {
         self.close_confirm_window(ctx);
         self.quit_confirm_window(ctx);
         self.render_detached(ctx);
+
+        // Pro module: dispatch the chrome action, then let it draw its dialogs.
+        // `self.pro` is moved out for the calls so the module can take `&mut
+        // self` as its `ProHost` without aliasing.
+        let mut pro = std::mem::replace(&mut self.pro, crate::pro::noop_module());
+        match pro_action {
+            Some(ProAction::Parallel) => pro.open_parallel(self),
+            Some(ProAction::Compare) => pro.run_compare(self),
+            Some(ProAction::Cleanup) => pro.open_cleanup(self),
+            Some(ProAction::License) => self.license_open = true,
+            None => {}
+        }
+        pro.ui(ctx, self);
+        self.pro = pro;
+
+        self.license_window(ctx);
+        self.report_window(ctx);
+        self.toast_overlay(ctx);
 
         self.persist_session();
     }

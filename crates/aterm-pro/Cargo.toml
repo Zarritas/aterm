@@ -1,0 +1,17 @@
+# aterm-pro — PRIVATE Pro features for aterm (open-core).
+#
+# In the official build this is an optional path/git dependency of `aterm`
+# enabled by `--features pro`. It is intentionally NOT a workspace member, so a
+# Community checkout that doesn't ship this crate still builds the app without
+# it. Implements `aterm-pro-api::ProModule` against the `ProHost` surface only.
+[package]
+name = "aterm-pro"
+version = "0.1.0"
+edition.workspace = true
+license = "LicenseRef-proprietary"
+description = "Private Pro features for aterm (parallel worktree compare, …)"
+publish = false
+
+[dependencies]
+aterm-pro-api = { path = "../aterm-pro-api" }
+egui = "0.29"

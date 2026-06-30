@@ -9,7 +9,9 @@
 //! Architecture, rationale and the full roadmap live in CLAUDE.md.
 
 mod app;
+mod license;
 mod persist;
+mod pro;
 mod service_status;
 mod sessions;
 mod settings;
@@ -32,6 +34,8 @@ fn main() -> eframe::Result {
             app::install_fonts(&cc.egui_ctx);
             theme::load_persisted();
             theme::apply(&cc.egui_ctx);
+            license::start_trial_if_needed();
+            license::revalidate();
             Ok(Box::<app::AtermApp>::default())
         }),
     )

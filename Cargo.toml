@@ -3,7 +3,15 @@
 # `agent-sessions-cli` (JSON sidecar for the VS Code extension).
 [workspace]
 resolver = "2"
-members = ["crates/agent-sessions", "crates/agent-sessions-cli", "crates/aterm"]
+# `aterm-pro` is intentionally NOT a member: it's the private, optional Pro
+# crate pulled in only by `aterm`'s `pro` feature, so a Community checkout
+# without it still builds. `aterm-pro-api` (the open-core contract) is public.
+members = [
+    "crates/agent-sessions",
+    "crates/agent-sessions-cli",
+    "crates/aterm",
+    "crates/aterm-pro-api",
+]
 
 [workspace.package]
 edition = "2021"

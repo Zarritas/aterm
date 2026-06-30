@@ -1,0 +1,14 @@
+# aterm-pro-api — the open-core contract between the `aterm` app (core) and the
+# private `aterm-pro` crate. This is the Rust equivalent of the extension's
+# `src/pro-api.d.ts`: the core implements `ProHost`; the Pro module implements
+# `ProModule` against that surface only. Lives in the public repo so the
+# Community build still type-checks the seams even without the Pro source.
+[package]
+name = "aterm-pro-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Open-core contract (ProHost/ProModule traits) for aterm"
+
+[dependencies]
+egui = "0.29"

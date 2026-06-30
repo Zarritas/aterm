@@ -12,8 +12,15 @@ description = "Native terminal with a built-in coding-agent session manager"
 name = "aterm"
 path = "src/main.rs"
 
+[features]
+# Official build: pulls in the private Pro features. Community build omits it.
+pro = ["dep:aterm-pro"]
+
 [dependencies]
 agent-sessions = { path = "../agent-sessions" }
+aterm-pro-api = { path = "../aterm-pro-api" }
+# Optional, private. Present only in the official build (--features pro).
+aterm-pro = { path = "../aterm-pro", optional = true }
 alacritty_terminal = "0.25"
 egui = "0.29"
 eframe = "0.29"
