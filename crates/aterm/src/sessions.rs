@@ -2165,7 +2165,7 @@ fn row_ui(
                     ui.colored_label(provider_color(provider_id), format!("[{provider_id}]"));
                 }
                 if meta.is_some_and(|m| m.favorite) {
-                    ui.colored_label(egui::Color32::from_rgb(0xf9, 0xe2, 0xaf), "★")
+                    ui.colored_label(crate::theme::pal().yellow, "★")
                         .on_hover_text("Favorito");
                 }
                 if let Some(icon) = crate::icons::session(&format!("{provider_id}:{}", s.id)) {

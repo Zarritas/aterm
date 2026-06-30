@@ -516,12 +516,18 @@ impl AtermApp {
             self.toast = None;
             return;
         }
+        let pal = crate::theme::pal();
         egui::Area::new(egui::Id::new("aterm-toast"))
             .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -16.0))
             .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.label(msg);
-                });
+                egui::Frame::none()
+                    .fill(pal.surface1)
+                    .stroke(egui::Stroke::new(1.0, pal.lavender))
+                    .rounding(10.0)
+                    .inner_margin(egui::Margin::symmetric(14.0, 9.0))
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(msg).color(pal.text));
+                    });
             });
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
@@ -1105,8 +1111,24 @@ impl eframe::App for AtermApp {
                         self.settings_open = true;
                     }
                     ui.separator();
+                    // Licence as a coloured pill: green (Pro) / yellow (trial) /
+                    // grey (Community).
+                    let pal = crate::theme::pal();
+                    let fill = match crate::license::status() {
+                        crate::license::Status::Licensed => pal.green,
+                        crate::license::Status::Trial { .. } => pal.yellow,
+                        crate::license::Status::Expired => pal.surface2,
+                    };
                     if ui
-                        .button(crate::license::badge())
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(crate::license::badge())
+                                    .color(egui::Color32::BLACK)
+                                    .small(),
+                            )
+                            .fill(fill)
+                            .rounding(10.0),
+                        )
                         .on_hover_text("Estado de la licencia / activar Pro")
                         .clicked()
                     {
