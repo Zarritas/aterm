@@ -1143,8 +1143,30 @@ impl eframe::App for AtermApp {
                         self.request_close(id);
                     }
 
-                    // Settings cog + licence badge, pushed to the right edge.
+                    // Window controls + settings cog + licence badge, pushed to
+                    // the right edge (we drew our own title bar).
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("✕").on_hover_text("Cerrar").clicked() {
+                            if self.tabs.iter().any(|t| t.term.has_foreground_process()) {
+                                self.quit_confirm = true;
+                            } else {
+                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                        }
+                        let maximized = ui.input(|i| i.viewport().maximized).unwrap_or(false);
+                        if ui
+                            .button(if maximized { "🗗" } else { "🗖" })
+                            .on_hover_text(if maximized { "Restaurar" } else { "Maximizar" })
+                            .clicked()
+                        {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                        }
+                        if ui.button("🗕").on_hover_text("Minimizar").clicked() {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                        ui.separator();
                         if ui.button("⚙").on_hover_text("Ajustes").clicked() {
                             self.settings_open = true;
                         }
@@ -1174,6 +1196,22 @@ impl eframe::App for AtermApp {
                         }
                     });
                 });
+
+                // The header doubles as the title bar: drag empty space to move
+                // the window, double-click to (un)maximize. Widgets above claim
+                // their own clicks, so only the gaps drag.
+                let bar = ui.interact(
+                    ui.max_rect(),
+                    ui.id().with("titlebar-drag"),
+                    egui::Sense::click_and_drag(),
+                );
+                if bar.drag_started() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if bar.double_clicked() {
+                    let max = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+                }
             });
 
         egui::SidePanel::left("sessions")

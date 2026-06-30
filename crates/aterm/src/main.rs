@@ -29,7 +29,11 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 720.0])
-            .with_title("aterm"),
+            .with_title("aterm")
+            // Sin barra de título del SO (esa franja blanca que cantaba): el
+            // header propio hace de barra de título (arrastrar + botones).
+            .with_decorations(false)
+            .with_resizable(true),
         ..Default::default()
     };
     eframe::run_native(
