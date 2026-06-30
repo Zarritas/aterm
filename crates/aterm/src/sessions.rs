@@ -745,6 +745,11 @@ impl SessionPanel {
                         };
                     let popup_id = ui.make_persistent_id("import-autocomplete");
                     let n = candidates.len();
+                    // Typing exits keyboard-nav mode (stale highlight would point
+                    // at the wrong row once the candidate set changes).
+                    if resp.changed() {
+                        self.import_ac_sel = None;
+                    }
                     if resp.has_focus() && n > 0 {
                         ui.memory_mut(|m| m.open_popup(popup_id));
                         // Keyboard nav while the field is focused: Tab/↓ enters
@@ -771,13 +776,14 @@ impl SessionPanel {
                             self.import_ac_sel = None;
                             ui.memory_mut(|m| m.close_popup());
                         }
-                        // Enter accepts the highlighted folder, fills the input
-                        // and resets the highlight; the popup then re-opens with
-                        // that folder's children so you can keep drilling down.
+                        // Enter accepts the highlighted folder and fills the
+                        // input; the popup re-opens with that folder's children
+                        // and keeps the first one highlighted, so you can keep
+                        // drilling down by pressing Enter again.
                         if enter {
                             if let Some(i) = self.import_ac_sel {
                                 self.import_path = candidates[i.min(n - 1)].clone();
-                                self.import_ac_sel = None;
+                                self.import_ac_sel = Some(0);
                                 resp.request_focus();
                             }
                         }
@@ -794,22 +800,27 @@ impl SessionPanel {
                         egui::PopupCloseBehavior::CloseOnClickOutside,
                         |ui| {
                             ui.set_min_width(resp.rect.width());
-                            for (i, c) in candidates.into_iter().enumerate() {
-                                let row = ui.selectable_label(sel == Some(i), completion_label(&c));
-                                if sel == Some(i) {
-                                    row.scroll_to_me(None);
-                                }
-                                if row.clicked() {
-                                    self.import_path = c;
-                                    picked = true;
-                                }
-                            }
+                            egui::ScrollArea::vertical()
+                                .max_height(220.0)
+                                .show(ui, |ui| {
+                                    for (i, c) in candidates.into_iter().enumerate() {
+                                        let row = ui
+                                            .selectable_label(sel == Some(i), completion_label(&c));
+                                        if sel == Some(i) {
+                                            row.scroll_to_me(Some(egui::Align::Center));
+                                        }
+                                        if row.clicked() {
+                                            self.import_path = c;
+                                            picked = true;
+                                        }
+                                    }
+                                });
                         },
                     );
                     // Clicking a folder keeps the field focused so you can keep
                     // drilling down without re-clicking the input.
                     if picked {
-                        self.import_ac_sel = None;
+                        self.import_ac_sel = Some(0);
                         resp.request_focus();
                     }
                 }
