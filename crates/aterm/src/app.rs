@@ -972,6 +972,21 @@ impl eframe::App for AtermApp {
         egui::TopBottomPanel::top("header")
             .frame(header_frame)
             .show(ctx, |ui| {
+                // Title-bar drag FIRST (over the whole header), so the buttons
+                // drawn afterwards sit on top and claim their own clicks; only
+                // the empty gaps drag the window.
+                let bar = ui.interact(
+                    ui.max_rect(),
+                    ui.id().with("titlebar-drag"),
+                    egui::Sense::click_and_drag(),
+                );
+                if bar.drag_started() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if bar.double_clicked() {
+                    let max = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+                }
                 ui.horizontal(|ui| {
                     crate::theme::brand(ui);
                     ui.add_space(4.0);
@@ -1196,22 +1211,6 @@ impl eframe::App for AtermApp {
                         }
                     });
                 });
-
-                // The header doubles as the title bar: drag empty space to move
-                // the window, double-click to (un)maximize. Widgets above claim
-                // their own clicks, so only the gaps drag.
-                let bar = ui.interact(
-                    ui.max_rect(),
-                    ui.id().with("titlebar-drag"),
-                    egui::Sense::click_and_drag(),
-                );
-                if bar.drag_started() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
-                if bar.double_clicked() {
-                    let max = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-                }
             });
 
         egui::SidePanel::left("sessions")
