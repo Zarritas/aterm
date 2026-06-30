@@ -198,6 +198,9 @@ pub struct SessionPanel {
     template_form: Option<TemplateForm>,
     /// Draft path for restoring a catalog backup `.zip`.
     backup_path: String,
+    /// Highlighted index in the import path autocomplete popup (keyboard nav);
+    /// `None` while not navigating the list.
+    import_ac_sel: Option<usize>,
     /// Draft emoji for the project being edited in the project window.
     project_icon_draft: String,
     /// Project path whose commands window is open, plus its discovered commands.
@@ -267,6 +270,7 @@ impl Default for SessionPanel {
             templates_open: false,
             template_form: None,
             backup_path: String::new(),
+            import_ac_sel: None,
             project_icon_draft: String::new(),
             commands_for: None,
             commands: Vec::new(),
@@ -740,18 +744,48 @@ impl SessionPanel {
                             Vec::new()
                         };
                     let popup_id = ui.make_persistent_id("import-autocomplete");
-                    // Tab completes to the first suggestion (keeps the field
-                    // focused so the next level shows immediately).
-                    if resp.has_focus()
-                        && !candidates.is_empty()
-                        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab))
-                    {
-                        self.import_path = candidates[0].clone();
-                        resp.request_focus();
-                    }
-                    if resp.has_focus() && !candidates.is_empty() {
+                    let n = candidates.len();
+                    if resp.has_focus() && n > 0 {
                         ui.memory_mut(|m| m.open_popup(popup_id));
+                        // Keyboard nav while the field is focused: Tab/↓ enters
+                        // the list and moves the highlight, ↑ moves up, Enter
+                        // accepts, Esc closes. Keys are consumed so focus stays.
+                        let (down, up, enter, esc) = ui.input_mut(|i| {
+                            (
+                                i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                                    || i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                            )
+                        });
+                        if down {
+                            self.import_ac_sel =
+                                Some(self.import_ac_sel.map_or(0, |i| (i + 1).min(n - 1)));
+                        }
+                        if up {
+                            self.import_ac_sel =
+                                self.import_ac_sel.map(|i| i.saturating_sub(1)).or(Some(0));
+                        }
+                        if esc {
+                            self.import_ac_sel = None;
+                            ui.memory_mut(|m| m.close_popup());
+                        }
+                        // Enter accepts the highlighted folder, fills the input
+                        // and resets the highlight; the popup then re-opens with
+                        // that folder's children so you can keep drilling down.
+                        if enter {
+                            if let Some(i) = self.import_ac_sel {
+                                self.import_path = candidates[i.min(n - 1)].clone();
+                                self.import_ac_sel = None;
+                                resp.request_focus();
+                            }
+                        }
+                    } else {
+                        self.import_ac_sel = None;
                     }
+
+                    let sel = self.import_ac_sel;
                     let mut picked = false;
                     egui::popup::popup_below_widget(
                         ui,
@@ -760,17 +794,22 @@ impl SessionPanel {
                         egui::PopupCloseBehavior::CloseOnClickOutside,
                         |ui| {
                             ui.set_min_width(resp.rect.width());
-                            for c in candidates {
-                                if ui.selectable_label(false, completion_label(&c)).clicked() {
+                            for (i, c) in candidates.into_iter().enumerate() {
+                                let row = ui.selectable_label(sel == Some(i), completion_label(&c));
+                                if sel == Some(i) {
+                                    row.scroll_to_me(None);
+                                }
+                                if row.clicked() {
                                     self.import_path = c;
                                     picked = true;
                                 }
                             }
                         },
                     );
-                    // Keep the field focused after a pick so you can keep
-                    // drilling down without clicking back into it.
+                    // Clicking a folder keeps the field focused so you can keep
+                    // drilling down without re-clicking the input.
                     if picked {
+                        self.import_ac_sel = None;
                         resp.request_focus();
                     }
                 }
