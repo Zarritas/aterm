@@ -9,6 +9,7 @@
 //! Architecture, rationale and the full roadmap live in CLAUDE.md.
 
 mod app;
+mod backup;
 mod license;
 mod persist;
 mod pro;

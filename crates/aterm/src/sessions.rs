@@ -191,6 +191,8 @@ pub struct SessionPanel {
     templates_open: bool,
     /// In-flight "save new template" form (when `Some`, the form is shown).
     template_form: Option<TemplateForm>,
+    /// Draft path for restoring a catalog backup `.zip`.
+    backup_path: String,
 }
 
 /// Draft fields for the "save a launch template" form.
@@ -238,6 +240,7 @@ impl Default for SessionPanel {
             templates: crate::templates::TemplateStore::load(),
             templates_open: false,
             template_form: None,
+            backup_path: String::new(),
         }
     }
 }
@@ -565,6 +568,60 @@ impl SessionPanel {
                 });
                 if ui.button("Importar").clicked() {
                     self.do_import();
+                }
+            });
+
+        egui::CollapsingHeader::new("Backup del catálogo")
+            .id_salt("backup")
+            .show(ui, |ui| {
+                ui.weak("Metadata + proyectos + plantillas en un .zip.");
+                if ui
+                    .button("⤓ Crear backup")
+                    .on_hover_text("Guarda un snapshot en tu carpeta personal")
+                    .clicked()
+                {
+                    let dest = home_dir().join(format!("aterm-backup-{}.zip", now_secs()));
+                    match crate::backup::backup(&dest) {
+                        Ok(n) => {
+                            self.status =
+                                Some(format!("Backup creado ({n} ficheros) → {}", dest.display()))
+                        }
+                        Err(e) => self.status = Some(format!("Backup falló: {e}")),
+                    }
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Restaurar:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.backup_path)
+                            .hint_text("ruta del backup .zip")
+                            .desired_width(220.0),
+                    );
+                });
+                let trimmed = self.backup_path.trim().to_string();
+                if !trimmed.is_empty() && !std::path::Path::new(&trimmed).is_file() {
+                    for c in path_candidates(&trimmed) {
+                        if ui.selectable_label(false, completion_label(&c)).clicked() {
+                            self.backup_path = c;
+                        }
+                    }
+                }
+                if ui
+                    .add_enabled(!trimmed.is_empty(), egui::Button::new("Restaurar"))
+                    .on_hover_text("Sobrescribe el catálogo local con el del backup")
+                    .clicked()
+                {
+                    match crate::backup::restore(std::path::Path::new(&trimmed)) {
+                        Ok(files) => {
+                            // Reload the in-memory catalog from the restored files.
+                            self.metadata = MetadataStore::load(&self.metadata_path);
+                            self.projects = ProjectNames::load(&self.projects_path);
+                            self.templates = crate::templates::TemplateStore::load();
+                            self.status =
+                                Some(format!("Restaurados {}: {}", files.len(), files.join(", ")));
+                        }
+                        Err(e) => self.status = Some(format!("Restore falló: {e}")),
+                    }
                 }
             });
 
