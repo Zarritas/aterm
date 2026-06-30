@@ -457,22 +457,28 @@ impl ProImpl {
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
-                if ui.button("📁 Perfiles de espacio de trabajo").clicked() {
+                ui.set_width(260.0);
+                // Full-width, evenly-sized action buttons.
+                let item = |ui: &mut egui::Ui, label: &str| -> bool {
+                    ui.add_sized([ui.available_width(), 28.0], egui::Button::new(label))
+                        .clicked()
+                };
+                if item(ui, "📁 Perfiles de espacio de trabajo") {
                     self.profiles_open = true;
                 }
-                if ui.button("📊 Dashboard").clicked() {
+                if item(ui, "📊 Dashboard") {
                     self.dashboard_open = true;
                 }
-                if ui.button("🖺 Exportar conversación a HTML").clicked() {
+                if item(ui, "🖺 Exportar conversación a HTML") {
                     self.export_open = true;
                 }
-                if ui.button("⇄ Portar sesión a otro proveedor").clicked() {
+                if item(ui, "⇄ Portar sesión a otro proveedor") {
                     self.port_open = true;
                 }
-                if ui.button("🕸 Memory graph (CLAUDE.md)").clicked() {
+                if item(ui, "🕸 Memory graph (CLAUDE.md)") {
                     self.run_memory = true;
                 }
-                if ui.button("🔌 Configurar MCP").clicked() {
+                if item(ui, "🔌 Configurar MCP") {
                     self.run_mcp = true;
                 }
             });
