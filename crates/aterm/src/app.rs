@@ -186,6 +186,10 @@ pub struct AtermApp {
     /// The current frame's egui context, stashed so `ProHost::open_agent` (which
     /// has no `ctx` parameter) can spawn terminals. Set at the top of `update`.
     egui_ctx: egui::Context,
+    /// Whether the action palette (Ctrl+Shift+P) is open.
+    palette_open: bool,
+    /// Filter text in the action palette.
+    palette_filter: String,
 }
 
 impl Default for AtermApp {
@@ -224,8 +228,42 @@ impl Default for AtermApp {
             license_key_input: String::new(),
             license_msg: None,
             egui_ctx: egui::Context::default(),
+            palette_open: false,
+            palette_filter: String::new(),
         }
     }
+}
+
+/// One entry in the action palette.
+#[derive(Clone, Copy)]
+enum PaletteAction {
+    NewShell,
+    TogglePanel,
+    Settings,
+    Search,
+    Parallel,
+    Compare,
+    Cleanup,
+    License,
+    Templates,
+}
+
+impl PaletteAction {
+    /// `(label, action)` catalogue, in display order.
+    const ALL: [(&'static str, PaletteAction); 9] = [
+        ("Nueva shell", PaletteAction::NewShell),
+        (
+            "Mostrar/ocultar panel de sesiones",
+            PaletteAction::TogglePanel,
+        ),
+        ("Ajustes", PaletteAction::Settings),
+        ("Buscar en el scrollback", PaletteAction::Search),
+        ("Comparativa paralela (Pro)", PaletteAction::Parallel),
+        ("Comparar worktrees (Pro)", PaletteAction::Compare),
+        ("Limpiar worktrees (Pro)", PaletteAction::Cleanup),
+        ("Plantillas de sesión", PaletteAction::Templates),
+        ("Licencia / Pro", PaletteAction::License),
+    ];
 }
 
 impl aterm_pro_api::ProHost for AtermApp {
@@ -416,6 +454,44 @@ impl AtermApp {
                 });
             });
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    }
+
+    /// The action palette: a filterable list of app actions. Returns the chosen
+    /// action (the caller dispatches it).
+    fn palette_window(&mut self, ctx: &egui::Context) -> Option<PaletteAction> {
+        if !self.palette_open {
+            return None;
+        }
+        let mut open = true;
+        let mut chosen = None;
+        egui::Window::new("Paleta de acciones")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.palette_filter)
+                        .hint_text("Filtrar acciones…")
+                        .desired_width(340.0),
+                );
+                resp.request_focus();
+                let f = self.palette_filter.to_lowercase();
+                egui::ScrollArea::vertical()
+                    .max_height(280.0)
+                    .show(ui, |ui| {
+                        for (label, action) in PaletteAction::ALL {
+                            if (f.is_empty() || label.to_lowercase().contains(&f))
+                                && ui.selectable_label(false, label).clicked()
+                            {
+                                chosen = Some(action);
+                            }
+                        }
+                    });
+            });
+        if chosen.is_some() || !open {
+            self.palette_open = false;
+        }
+        chosen
     }
 
     /// Open (or focus, for a resumed session) a terminal tab. Returns the id of
@@ -694,6 +770,28 @@ impl eframe::App for AtermApp {
             if let Some((argv, cwd, key)) = self.closed_stack.pop() {
                 self.open_tab(ctx, argv, cwd, key);
             }
+        }
+
+        // Action palette (Ctrl+Shift+P).
+        if ctx.input_mut(|i| {
+            i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::P)
+        }) {
+            self.palette_open = !self.palette_open;
+            self.palette_filter.clear();
+        }
+        match self.palette_window(ctx) {
+            Some(PaletteAction::NewShell) => {
+                pending_open = Some((shell_argv(), shell_dir(), None));
+            }
+            Some(PaletteAction::TogglePanel) => self.panel_open = !self.panel_open,
+            Some(PaletteAction::Settings) => self.settings_open = true,
+            Some(PaletteAction::Search) => self.search_open = true,
+            Some(PaletteAction::Parallel) => pro_action = Some(ProAction::Parallel),
+            Some(PaletteAction::Compare) => pro_action = Some(ProAction::Compare),
+            Some(PaletteAction::Cleanup) => pro_action = Some(ProAction::Cleanup),
+            Some(PaletteAction::License) => self.license_open = true,
+            Some(PaletteAction::Templates) => self.panel.open_templates(),
+            None => {}
         }
 
         // Tab navigation (global, so it works regardless of which pane is

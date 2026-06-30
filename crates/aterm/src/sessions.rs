@@ -379,6 +379,11 @@ impl SessionPanel {
         }
     }
 
+    /// Open the templates manager (used by the app's action palette).
+    pub fn open_templates(&mut self) {
+        self.templates_open = true;
+    }
+
     /// Render the panel into `ui`; returns an action when the user resumes a
     /// session or starts a new one.
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<PanelAction> {
