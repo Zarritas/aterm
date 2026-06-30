@@ -25,6 +25,8 @@ enum GroupMode {
     Project,
     /// Two levels: provider → project (working directory).
     Cascade,
+    /// One section per user-defined group/collection.
+    Group,
 }
 
 /// User-assigned display names for project directories, keyed by absolute path.
@@ -199,6 +201,10 @@ pub struct SessionPanel {
     /// Project path whose commands window is open, plus its discovered commands.
     commands_for: Option<String>,
     commands: Vec<crate::commands::ProjectCommand>,
+    /// User-defined groups/collections (native-only store).
+    groups_store: crate::groups::GroupStore,
+    /// Draft name for the "new group" field in the group view.
+    new_group_name: String,
 }
 
 /// Draft fields for the "save a launch template" form.
@@ -250,6 +256,8 @@ impl Default for SessionPanel {
             project_icon_draft: String::new(),
             commands_for: None,
             commands: Vec::new(),
+            groups_store: crate::groups::GroupStore::load(),
+            new_group_name: String::new(),
         }
     }
 }
@@ -455,6 +463,7 @@ impl SessionPanel {
                 GroupMode::Cascade,
                 "Proveedor › Proyecto",
             );
+            ui.selectable_value(&mut self.group_mode, GroupMode::Group, "Grupos");
         });
 
         ui.horizontal(|ui| {
@@ -651,10 +660,14 @@ impl SessionPanel {
         let mut to_compact: Option<(usize, usize)> = None;
         let mut to_rename_project: Option<String> = None;
         let mut to_open_commands: Option<String> = None;
+        let mut to_create_group = false;
+        let mut to_delete_group: Option<String> = None;
         // Take the new-session path draft out of `self` so the scroll closure
         // can mutate it without clashing with the immutable `self` borrows
         // below; written back after the closure.
         let mut new_session_path = std::mem::take(&mut self.new_session_path);
+        let mut new_group_draft = std::mem::take(&mut self.new_group_name);
+        let group_store = &self.groups_store;
 
         // When a content search is active, text matching uses its result set
         // (transcript hits) instead of the title/metadata filter.
@@ -911,6 +924,79 @@ impl SessionPanel {
                         );
                     }
                 }
+                GroupMode::Group => {
+                    // Index every visible session by its `provider:id` key so a
+                    // group's members can be resolved to their (gi, si).
+                    let mut index: std::collections::HashMap<String, (usize, usize)> =
+                        std::collections::HashMap::new();
+                    for (gi, group) in groups.iter().enumerate() {
+                        let pid = group.provider.id();
+                        for si in 0..group.sessions.len() {
+                            if passes(gi, si) {
+                                index.insert(format!("{pid}:{}", group.sessions[si].id), (gi, si));
+                            }
+                        }
+                    }
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut new_group_draft)
+                                .hint_text("nueva colección")
+                                .desired_width(160.0),
+                        );
+                        if ui.button("＋ Grupo").clicked() && !new_group_draft.trim().is_empty() {
+                            to_create_group = true;
+                        }
+                    });
+                    if group_store.groups.is_empty() {
+                        ui.weak("Crea una colección y asígnale sesiones desde ✏ en cada sesión.");
+                    }
+                    for (i, g) in group_store.groups.iter().enumerate() {
+                        let members: Vec<(usize, usize)> = g
+                            .members
+                            .iter()
+                            .filter_map(|k| index.get(k).copied())
+                            .collect();
+                        let counts =
+                            count_states(members.iter().map(|(gi, si)| &groups[*gi].sessions[*si]));
+                        let color = g
+                            .color
+                            .as_deref()
+                            .and_then(parse_hex)
+                            .unwrap_or_else(c_teal);
+                        let title = egui::RichText::new(format!("{} ({})", g.name, members.len()))
+                            .color(color)
+                            .strong();
+                        section(ui, ("group", i), title, counts, force_open, true, |ui| {
+                            if ui
+                                .small_button("✕ eliminar grupo")
+                                .on_hover_text("Borrar esta colección (no toca las sesiones)")
+                                .clicked()
+                            {
+                                to_delete_group = Some(g.id.clone());
+                            }
+                            for (gi, si) in members {
+                                let group = &groups[gi];
+                                let s = &group.sessions[si];
+                                row_ui(
+                                    ui,
+                                    s,
+                                    metadata.get(group.provider.id(), &s.id),
+                                    group.provider.id(),
+                                    gi,
+                                    si,
+                                    true,
+                                    &mut action,
+                                    &mut to_edit,
+                                    &mut to_preview,
+                                    &mut to_export,
+                                    &mut to_delete,
+                                    &mut to_move,
+                                    &mut to_compact,
+                                );
+                            }
+                        });
+                    }
+                }
             });
 
         // Apply deferred mutations outside the borrow of `self.groups`.
@@ -956,6 +1042,14 @@ impl SessionPanel {
             self.commands = crate::commands::discover(std::path::Path::new(&path));
             self.commands_for = Some(path);
         }
+        if to_create_group {
+            self.groups_store.create(new_group_draft.trim());
+            new_group_draft.clear();
+        }
+        if let Some(id) = to_delete_group {
+            self.groups_store.delete(&id);
+        }
+        self.new_group_name = new_group_draft;
         self.new_session_path = new_session_path;
         self.force_open = None; // one-shot: applied this frame, then released
 
@@ -1083,12 +1177,21 @@ impl SessionPanel {
         // Tag catalogue (all tags in use) for the markable picker — read before
         // taking `&mut self.edit`.
         let known_tags = self.metadata.all_tags();
+        // Group catalogue (id, name) for the assignment checkboxes.
+        let group_list: Vec<(String, String)> = self
+            .groups_store
+            .groups
+            .iter()
+            .map(|g| (g.id.clone(), g.name.clone()))
+            .collect();
         let Some(edit) = self.edit.as_mut() else {
             return;
         };
+        let key = format!("{}:{}", edit.provider, edit.id);
         let mut open = true;
         let mut save = false;
         let mut cancel = false;
+        let mut to_toggle_group: Option<String> = None;
         egui::Window::new("Editar sesión")
             .open(&mut open)
             .resizable(false)
@@ -1140,6 +1243,18 @@ impl SessionPanel {
                             .desired_width(80.0),
                     );
                     ui.end_row();
+                    if !group_list.is_empty() {
+                        ui.label("Grupos");
+                        ui.horizontal_wrapped(|ui| {
+                            for (gid, gname) in &group_list {
+                                let mut present = self.groups_store.contains(gid, &key);
+                                if ui.checkbox(&mut present, gname).clicked() {
+                                    to_toggle_group = Some(gid.clone());
+                                }
+                            }
+                        });
+                        ui.end_row();
+                    }
                 });
                 ui.horizontal(|ui| {
                     if ui.button("Guardar").clicked() {
@@ -1151,6 +1266,10 @@ impl SessionPanel {
                 });
             });
 
+        // Group membership toggles apply immediately (window stays open).
+        if let Some(gid) = to_toggle_group {
+            self.groups_store.toggle(&gid, &key);
+        }
         if save {
             let (provider, id) = (edit.provider.clone(), edit.id.clone());
             let name = edit.name.trim().to_string();
