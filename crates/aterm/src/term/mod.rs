@@ -4,7 +4,7 @@
 //!   - `Term`            the cell grid + cursor + scrollback model
 //!   - `tty::new`        spawns the child process under a real PTY
 //!   - `EventLoop`       a background thread that reads the PTY, feeds the VT
-//!                       parser, and mutates `Term`. We only react to events.
+//!     parser, and mutates `Term`. We only react to events.
 //!
 //! What we DO write: render.rs (cells → egui) and input.rs (keys → bytes).
 //!
@@ -13,9 +13,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use alacritty_terminal::event::{
-    Event, EventListener, Notify, OnResize, WindowSize,
-};
+use alacritty_terminal::event::{Event, EventListener, Notify, OnResize, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg, Notifier};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
@@ -258,8 +256,9 @@ impl TermInstance {
         let m = *term.mode();
         Modes {
             app_cursor: m.contains(TermMode::APP_CURSOR),
-            mouse_report: m
-                .intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION),
+            mouse_report: m.intersects(
+                TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION,
+            ),
             mouse_drag: m.contains(TermMode::MOUSE_DRAG),
             mouse_motion: m.contains(TermMode::MOUSE_MOTION),
             sgr_mouse: m.contains(TermMode::SGR_MOUSE),
@@ -379,7 +378,11 @@ impl TermInstance {
         if let Some(h) = row[Column(col)].hyperlink() {
             let uri = h.uri().to_string();
             let same = |c: usize| {
-                row[Column(c)].hyperlink().map(|x| x.uri().to_string()).as_deref() == Some(&uri)
+                row[Column(c)]
+                    .hyperlink()
+                    .map(|x| x.uri().to_string())
+                    .as_deref()
+                    == Some(&uri)
             };
             let mut start = col;
             while start > 0 && same(start - 1) {
@@ -470,7 +473,9 @@ impl TermInstance {
 
         let point = Point::new(Line(line), Column(col));
         term.scroll_to_point(point);
-        let end = (col + needle.chars().count()).saturating_sub(1).min(cols - 1);
+        let end = (col + needle.chars().count())
+            .saturating_sub(1)
+            .min(cols - 1);
         let mut sel = Selection::new(SelectionType::Simple, point, Side::Left);
         sel.update(Point::new(Line(line), Column(end)), Side::Right);
         term.selection = Some(sel);
@@ -664,7 +669,11 @@ mod tests {
             cell_height: 16.0,
         };
         let term = TermInstance::spawn(
-            vec!["/bin/sh".to_string(), "-c".to_string(), "exit 7".to_string()],
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "exit 7".to_string(),
+            ],
             None,
             size,
             egui::Context::default(),

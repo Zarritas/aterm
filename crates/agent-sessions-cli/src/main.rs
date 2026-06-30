@@ -97,7 +97,10 @@ fn main() {
 /// `AgentProviderInfo` struct.
 fn scan() {
     let providers = all_providers();
-    let infos: Vec<AgentProviderInfo> = providers.iter().map(provider_info).collect();
+    let infos: Vec<AgentProviderInfo> = providers
+        .iter()
+        .map(|p| provider_info(p.as_ref()))
+        .collect();
     let mut sessions = Vec::new();
     let mut quotas: HashMap<String, ProviderQuota> = HashMap::new();
     for p in &providers {
@@ -136,7 +139,10 @@ fn scan() {
 
 /// Provider metadata only (cheap: no session parsing).
 fn providers() {
-    let infos: Vec<AgentProviderInfo> = all_providers().iter().map(provider_info).collect();
+    let infos: Vec<AgentProviderInfo> = all_providers()
+        .iter()
+        .map(|p| provider_info(p.as_ref()))
+        .collect();
     emit(&serde_json::json!(infos));
 }
 
@@ -221,7 +227,8 @@ fn metadata_set(provider: Option<&String>, id: Option<&String>) {
     if std::io::stdin().read_to_string(&mut raw).is_err() {
         fail("no se pudo leer stdin");
     }
-    let patch: serde_json::Value = serde_json::from_str(raw.trim().is_empty().then_some("{}").unwrap_or(&raw))
+    let body = if raw.trim().is_empty() { "{}" } else { &raw };
+    let patch: serde_json::Value = serde_json::from_str(body)
         .unwrap_or_else(|e| fail(&format!("JSON inválido en stdin: {e}")));
     let path = metadata_path();
     let mut store = MetadataStore::load(&path);
@@ -355,9 +362,9 @@ fn projects_set(path: Option<&String>) {
     if std::io::stdin().read_to_string(&mut raw).is_err() {
         fail("no se pudo leer stdin");
     }
-    let patch: serde_json::Value =
-        serde_json::from_str(raw.trim().is_empty().then_some("{}").unwrap_or(&raw))
-            .unwrap_or_else(|e| fail(&format!("JSON inválido en stdin: {e}")));
+    let body = if raw.trim().is_empty() { "{}" } else { &raw };
+    let patch: serde_json::Value = serde_json::from_str(body)
+        .unwrap_or_else(|e| fail(&format!("JSON inválido en stdin: {e}")));
     let path_file = projects_path();
     let mut store = ProjectNames::load(&path_file);
     if let Some(v) = patch.get("name") {
@@ -647,7 +654,7 @@ fn archive_entries() -> Vec<serde_json::Value> {
     out
 }
 
-fn provider_info(p: &Box<dyn AgentProvider>) -> AgentProviderInfo {
+fn provider_info(p: &dyn AgentProvider) -> AgentProviderInfo {
     AgentProviderInfo {
         id: p.id().to_string(),
         display_name: p.display_name().to_string(),
@@ -727,7 +734,10 @@ const PRO_REQUIRED_MSG: &str = "Las tools MCP de Agent Sessions requieren la edi
 Actívala en la extensión de VS Code (Agent Sessions: Activar licencia Pro…) o durante la prueba de 14 días.";
 
 fn emit(value: &serde_json::Value) {
-    println!("{}", serde_json::to_string(value).unwrap_or_else(|_| "null".into()));
+    println!(
+        "{}",
+        serde_json::to_string(value).unwrap_or_else(|_| "null".into())
+    );
 }
 
 fn fail(msg: &str) -> ! {
@@ -768,9 +778,13 @@ fn search_content_cmd(query: Option<&String>) {
     let providers = all_providers();
     let mut hits = Vec::new();
     for p in &providers {
-        let Ok(sessions) = p.list_sessions() else { continue };
+        let Ok(sessions) = p.list_sessions() else {
+            continue;
+        };
         for s in sessions {
-            let Some(text) = p.fts_content(&s.id) else { continue };
+            let Some(text) = p.fts_content(&s.id) else {
+                continue;
+            };
             let lo = text.to_lowercase();
             if let Some(pos) = lo.find(&needle) {
                 // `pos` indexes the lowercased string, whose byte length can
@@ -866,8 +880,8 @@ fn templates_set(id: Option<&String>) {
     if std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw).is_err() {
         fail("no se pudo leer stdin");
     }
-    let mut t: LaunchTemplate = serde_json::from_str(&raw)
-        .unwrap_or_else(|e| fail(&format!("JSON inválido: {e}")));
+    let mut t: LaunchTemplate =
+        serde_json::from_str(&raw).unwrap_or_else(|e| fail(&format!("JSON inválido: {e}")));
     t.id = id.clone();
     if t.name.trim().is_empty() {
         fail("`name` es obligatorio");
@@ -924,8 +938,7 @@ fn claude_config_dir() -> PathBuf {
 
 /// Claude's OAuth access token, only when present and not expired.
 fn claude_oauth_token() -> Option<String> {
-    let raw =
-        std::fs::read_to_string(claude_config_dir().join(".credentials.json")).ok()?;
+    let raw = std::fs::read_to_string(claude_config_dir().join(".credentials.json")).ok()?;
     let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let oauth = v.get("claudeAiOauth")?;
     let token = oauth.get("accessToken")?.as_str()?.to_string();
@@ -1000,8 +1013,7 @@ fn write_usage_cache(q: &ProviderQuota) {
 /// GET https://api.anthropic.com/api/oauth/usage with the OAuth token. The token
 /// goes in a 0600 curl config file (not the arg list), removed right after.
 fn fetch_oauth_usage(token: &str) -> Option<String> {
-    let cfg_path =
-        std::env::temp_dir().join(format!("aterm-usage-{}.curl", std::process::id()));
+    let cfg_path = std::env::temp_dir().join(format!("aterm-usage-{}.curl", std::process::id()));
     let cfg = format!(
         "silent\nlocation\nmax-time = 8\nurl = \"https://api.anthropic.com/api/oauth/usage\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\n"
     );
@@ -1011,7 +1023,10 @@ fn fetch_oauth_usage(token: &str) -> Option<String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&cfg_path, std::fs::Permissions::from_mode(0o600));
     }
-    let out = std::process::Command::new("curl").arg("-K").arg(&cfg_path).output();
+    let out = std::process::Command::new("curl")
+        .arg("-K")
+        .arg(&cfg_path)
+        .output();
     let _ = std::fs::remove_file(&cfg_path);
     let out = out.ok()?;
     if !out.status.success() {
@@ -1242,7 +1257,10 @@ fn restore(source: Option<&String>) {
     if manifest.get("version").and_then(|v| v.as_u64()) != Some(BACKUP_VERSION) {
         fail(&format!(
             "versión de backup no soportada: {}",
-            manifest.get("version").cloned().unwrap_or(serde_json::Value::Null)
+            manifest
+                .get("version")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
         ));
     }
 
@@ -1311,16 +1329,23 @@ fn serve() {
         // Notifications carry no `id` and expect no reply (just absorb them).
         let id = msg.get("id").cloned();
         let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
-        let params = msg.get("params").cloned().unwrap_or(serde_json::Value::Null);
+        let params = msg
+            .get("params")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         let response = match method {
             "initialize" => Some(rpc_ok(id.clone(), mcp_initialize())),
             "initialized" | "notifications/initialized" => None,
             "ping" => Some(rpc_ok(id.clone(), serde_json::json!({}))),
             "tools/list" => Some(rpc_ok(id.clone(), tools_list())),
             "tools/call" => Some(handle_tool_call(id.clone(), &params)),
-            _ => id
-                .as_ref()
-                .map(|_| rpc_err(id.clone(), -32601, &format!("método no soportado: {method}"))),
+            _ => id.as_ref().map(|_| {
+                rpc_err(
+                    id.clone(),
+                    -32601,
+                    &format!("método no soportado: {method}"),
+                )
+            }),
         };
         if let Some(r) = response {
             let _ = writeln!(stdout, "{}", serde_json::to_string(&r).unwrap_or_default());
@@ -1385,7 +1410,10 @@ fn tools_list() -> serde_json::Value {
     })
 }
 
-fn handle_tool_call(id: Option<serde_json::Value>, params: &serde_json::Value) -> serde_json::Value {
+fn handle_tool_call(
+    id: Option<serde_json::Value>,
+    params: &serde_json::Value,
+) -> serde_json::Value {
     // Pro gate: even if a client cached the tool list, calls fail without Pro.
     if !pro_active() {
         return rpc_ok(
@@ -1429,7 +1457,10 @@ fn handle_tool_call(id: Option<serde_json::Value>, params: &serde_json::Value) -
 }
 
 fn tool_list_sessions(args: &serde_json::Value) -> Result<serde_json::Value, String> {
-    let provider_filter = args.get("provider").and_then(|v| v.as_str()).map(str::to_string);
+    let provider_filter = args
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let cwd_filter = args.get("cwd").and_then(|v| v.as_str()).map(str::to_string);
     let limit = args
         .get("limit")

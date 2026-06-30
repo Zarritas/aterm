@@ -351,8 +351,7 @@ pub fn apply(ctx: &egui::Context) {
     let p = pal();
     // Pick egui's light/dark base from the palette's background luminance, so a
     // light theme gets light-appropriate defaults (shadows, auto contrasts).
-    let lum =
-        0.299 * p.base.r() as f32 + 0.587 * p.base.g() as f32 + 0.114 * p.base.b() as f32;
+    let lum = 0.299 * p.base.r() as f32 + 0.587 * p.base.g() as f32 + 0.114 * p.base.b() as f32;
     let mut v = if lum > 128.0 {
         egui::Visuals::light()
     } else {
@@ -400,8 +399,14 @@ pub fn apply(ctx: &egui::Context) {
         (TextStyle::Heading, FontId::new(ui_font + 4.5, Proportional)),
         (TextStyle::Body, FontId::new(ui_font, Proportional)),
         (TextStyle::Button, FontId::new(ui_font, Proportional)),
-        (TextStyle::Small, FontId::new((ui_font - 2.5).max(9.0), Proportional)),
-        (TextStyle::Monospace, FontId::new(ui_font - 1.5, egui::FontFamily::Monospace)),
+        (
+            TextStyle::Small,
+            FontId::new((ui_font - 2.5).max(9.0), Proportional),
+        ),
+        (
+            TextStyle::Monospace,
+            FontId::new(ui_font - 1.5, egui::FontFamily::Monospace),
+        ),
     ]
     .into();
     ctx.set_style(style);

@@ -162,7 +162,10 @@ mod tests {
         let up = mouse_report(true, 64, 4, 2, true, Modifiers::default(), false).unwrap();
         assert_eq!(up, b"\x1b[<64;5;3M");
         // Ctrl adds 16 to the button code.
-        let ctrl = Modifiers { ctrl: true, ..Default::default() };
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
         let c = mouse_report(true, 0, 0, 0, true, ctrl, false).unwrap();
         assert_eq!(c, b"\x1b[<16;1;1M");
     }

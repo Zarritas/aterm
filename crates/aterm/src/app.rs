@@ -17,12 +17,18 @@ pub fn install_fonts(ctx: &egui::Context) {
     // DejaVu Sans → broad Latin/arrows/geometric; Noto Symbols2 → dingbats,
     // technical and misc-symbol blocks (✕ ✎ ⤓ ⟳ ⎇ …).
     let candidates = [
-        ("sys-dejavu", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        (
+            "sys-dejavu",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ),
         (
             "sys-noto-symbols2",
             "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
         ),
-        ("sys-noto", "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
+        (
+            "sys-noto",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        ),
     ];
     let mut loaded = Vec::new();
     for (name, path) in candidates {
@@ -348,8 +354,7 @@ impl AtermApp {
         } else {
             t.cwd.clone()
         };
-        self.closed_stack
-            .push((t.argv.clone(), cwd, t.key.clone()));
+        self.closed_stack.push((t.argv.clone(), cwd, t.key.clone()));
         if self.closed_stack.len() > 20 {
             self.closed_stack.remove(0);
         }
@@ -454,14 +459,23 @@ impl eframe::App for AtermApp {
             self.cycle_tab(1);
         }
         if ctx.input_mut(|i| {
-            i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::Tab)
+            i.consume_key(
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+                egui::Key::Tab,
+            )
         }) {
             self.cycle_tab(-1);
         }
         const NUM_KEYS: [egui::Key; 9] = [
-            egui::Key::Num1, egui::Key::Num2, egui::Key::Num3,
-            egui::Key::Num4, egui::Key::Num5, egui::Key::Num6,
-            egui::Key::Num7, egui::Key::Num8, egui::Key::Num9,
+            egui::Key::Num1,
+            egui::Key::Num2,
+            egui::Key::Num3,
+            egui::Key::Num4,
+            egui::Key::Num5,
+            egui::Key::Num6,
+            egui::Key::Num7,
+            egui::Key::Num8,
+            egui::Key::Num9,
         ];
         for (n, key) in NUM_KEYS.into_iter().enumerate() {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, key)) {
@@ -511,11 +525,7 @@ impl eframe::App for AtermApp {
                     self.panel_open = !self.panel_open;
                 }
                 ui.separator();
-                if ui
-                    .button(">_")
-                    .on_hover_text("Nueva shell")
-                    .clicked()
-                {
+                if ui.button(">_").on_hover_text("Nueva shell").clicked() {
                     pending_open = Some((shell_argv(), shell_dir(), None));
                 }
                 ui.separator();
@@ -550,7 +560,9 @@ impl eframe::App for AtermApp {
                     let resp = ui
                         .selectable_label(shown, text)
                         .interact(egui::Sense::click_and_drag())
-                        .on_hover_text("Click: enfocar · arrastra: reordenar · clic dcho: renombrar");
+                        .on_hover_text(
+                            "Click: enfocar · arrastra: reordenar · clic dcho: renombrar",
+                        );
                     rects.push((id, resp.rect));
                     if resp.clicked() {
                         to_focus = Some(id);
@@ -619,7 +631,7 @@ impl eframe::App for AtermApp {
                         let on_self = rects
                             .iter()
                             .find(|(id, _)| *id == src)
-                            .map_or(false, |(_, r)| px >= r.left() && px <= r.right());
+                            .is_some_and(|(_, r)| px >= r.left() && px <= r.right());
                         if on_self {
                             // Released over itself → it was really a click.
                             to_focus = Some(src);
@@ -668,8 +680,12 @@ impl eframe::App for AtermApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Only in-grid (non-detached, existing) tabs are visible here.
-            let grid_ok: std::collections::HashSet<u64> =
-                self.tabs.iter().filter(|t| !t.detached).map(|t| t.id).collect();
+            let grid_ok: std::collections::HashSet<u64> = self
+                .tabs
+                .iter()
+                .filter(|t| !t.detached)
+                .map(|t| t.id)
+                .collect();
             self.visible.retain(|id| grid_ok.contains(id));
             if self.visible.is_empty() {
                 if let Some(t) = self.tabs.iter().find(|t| !t.detached) {
@@ -877,7 +893,10 @@ impl AtermApp {
                         ui.set_width(150.0);
                         ui.add_space(4.0);
                         let item = |ui: &mut egui::Ui, c: &mut SettingsCat, this, label: &str| {
-                            let r = ui.selectable_label(*c == this, egui::RichText::new(label).size(15.0));
+                            let r = ui.selectable_label(
+                                *c == this,
+                                egui::RichText::new(label).size(15.0),
+                            );
                             if r.clicked() {
                                 *c = this;
                             }
@@ -894,7 +913,12 @@ impl AtermApp {
                         ui.set_width(370.0);
                         match *cat {
                             SettingsCat::Appearance => {
-                                ui.label(egui::RichText::new("APARIENCIA").color(accent).strong().size(13.0));
+                                ui.label(
+                                    egui::RichText::new("APARIENCIA")
+                                        .color(accent)
+                                        .strong()
+                                        .size(13.0),
+                                );
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     label_w(ui, "Tema");
@@ -903,7 +927,10 @@ impl AtermApp {
                                         .selected_text(&current)
                                         .show_ui(ui, |ui| {
                                             for (name, _) in crate::theme::THEMES {
-                                                if ui.selectable_label(current == name, name).clicked() {
+                                                if ui
+                                                    .selectable_label(current == name, name)
+                                                    .clicked()
+                                                {
                                                     crate::theme::select(ui.ctx(), name);
                                                 }
                                             }
@@ -912,7 +939,10 @@ impl AtermApp {
                                 ui.separator();
                                 ui.horizontal(|ui| {
                                     label_w(ui, "Fuente de la interfaz");
-                                    if ui.add(egui::Slider::new(&mut s.ui_font, 11.0..=22.0)).changed() {
+                                    if ui
+                                        .add(egui::Slider::new(&mut s.ui_font, 11.0..=22.0))
+                                        .changed()
+                                    {
                                         reapply_theme = true;
                                     }
                                 });
@@ -930,9 +960,17 @@ impl AtermApp {
                                 );
                             }
                             SettingsCat::Terminal => {
-                                ui.label(egui::RichText::new("TERMINAL").color(accent).strong().size(13.0));
+                                ui.label(
+                                    egui::RichText::new("TERMINAL")
+                                        .color(accent)
+                                        .strong()
+                                        .size(13.0),
+                                );
                                 ui.add_space(8.0);
-                                ui.checkbox(&mut s.auto_close_on_exit, "Cerrar la pestaña al salir (exit)");
+                                ui.checkbox(
+                                    &mut s.auto_close_on_exit,
+                                    "Cerrar la pestaña al salir (exit)",
+                                );
                                 ui.separator();
                                 ui.horizontal(|ui| {
                                     label_w(ui, "Shell");
@@ -953,7 +991,12 @@ impl AtermApp {
                                 });
                             }
                             SettingsCat::Panel => {
-                                ui.label(egui::RichText::new("PANEL DE SESIONES").color(accent).strong().size(13.0));
+                                ui.label(
+                                    egui::RichText::new("PANEL DE SESIONES")
+                                        .color(accent)
+                                        .strong()
+                                        .size(13.0),
+                                );
                                 ui.add_space(8.0);
                                 ui.label("Proveedores a escanear");
                                 ui.horizontal_wrapped(|ui| {
@@ -967,7 +1010,10 @@ impl AtermApp {
                                 ui.separator();
                                 ui.horizontal(|ui| {
                                     label_w(ui, "Auto-refresco");
-                                    ui.add(egui::Slider::new(&mut s.refresh_secs, 15..=600).suffix(" s"));
+                                    ui.add(
+                                        egui::Slider::new(&mut s.refresh_secs, 15..=600)
+                                            .suffix(" s"),
+                                    );
                                 });
                             }
                         }
@@ -1019,7 +1065,11 @@ impl AtermApp {
                 ui.horizontal_wrapped(|ui| {
                     for (name, c) in TAB_SWATCHES {
                         if ui
-                            .add(egui::Button::new("  ").fill(c).min_size(egui::vec2(22.0, 18.0)))
+                            .add(
+                                egui::Button::new("  ")
+                                    .fill(c)
+                                    .min_size(egui::vec2(22.0, 18.0)),
+                            )
                             .on_hover_text(name)
                             .clicked()
                         {
@@ -1066,10 +1116,19 @@ impl AtermApp {
                 self.search_last = None; // new query → search from the bottom
             }
             let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if enter || ui.button("▲").on_hover_text("Anterior coincidencia").clicked() {
+            if enter
+                || ui
+                    .button("▲")
+                    .on_hover_text("Anterior coincidencia")
+                    .clicked()
+            {
                 search = true;
             }
-            if ui.button("×").on_hover_text("Cerrar (Ctrl+Shift+F)").clicked() {
+            if ui
+                .button("×")
+                .on_hover_text("Cerrar (Ctrl+Shift+F)")
+                .clicked()
+            {
                 self.search_open = false;
             }
         });
@@ -1166,7 +1225,8 @@ impl AtermApp {
                 .interact(rect, ui.id().with(("vsplit", c)), egui::Sense::drag())
                 .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             if resp.hovered() || resp.dragged() {
-                ui.painter().vline(x, rect.y_range(), egui::Stroke::new(2.0, line));
+                ui.painter()
+                    .vline(x, rect.y_range(), egui::Stroke::new(2.0, line));
             }
             if resp.dragged() {
                 let df = resp.drag_delta().x / total_w;
@@ -1185,7 +1245,8 @@ impl AtermApp {
                 .interact(rect, ui.id().with(("hsplit", r)), egui::Sense::drag())
                 .on_hover_cursor(egui::CursorIcon::ResizeVertical);
             if resp.hovered() || resp.dragged() {
-                ui.painter().hline(rect.x_range(), y, egui::Stroke::new(2.0, line));
+                ui.painter()
+                    .hline(rect.x_range(), y, egui::Stroke::new(2.0, line));
             }
             if resp.dragged() {
                 let df = resp.drag_delta().y / total_h;
@@ -1197,7 +1258,11 @@ impl AtermApp {
     /// Move `df` of the total from track `i+1` into track `i` (or back), within
     /// the grid's column (`cols=true`) or row fractions, respecting `min`.
     fn shift_frac(&mut self, cols: bool, i: usize, df: f32, min: f32) {
-        let fracs = if cols { &mut self.col_fracs } else { &mut self.row_fracs };
+        let fracs = if cols {
+            &mut self.col_fracs
+        } else {
+            &mut self.row_fracs
+        };
         if i + 1 >= fracs.len() {
             return;
         }
@@ -1258,17 +1323,21 @@ impl AtermApp {
 
         // Highlight every visible occurrence of the search query (the focused
         // pane only, while the search bar is open).
-        let matches: Vec<(usize, usize, usize)> = if focused
-            && self.search_open
-            && !self.search_query.is_empty()
-        {
-            self.tabs[i].term.viewport_matches(&self.search_query)
-        } else {
-            Vec::new()
-        };
+        let matches: Vec<(usize, usize, usize)> =
+            if focused && self.search_open && !self.search_query.is_empty() {
+                self.tabs[i].term.viewport_matches(&self.search_query)
+            } else {
+                Vec::new()
+            };
 
-        let response =
-            render::draw(ui, &self.tabs[i].term, metrics, focused, link_span, &matches);
+        let response = render::draw(
+            ui,
+            &self.tabs[i].term,
+            metrics,
+            focused,
+            link_span,
+            &matches,
+        );
 
         if focused && self.focus_pending {
             response.request_focus();
@@ -1330,7 +1399,7 @@ impl AtermApp {
         let has_sel = self.tabs[idx]
             .term
             .selection_text()
-            .map_or(false, |t| !t.is_empty());
+            .is_some_and(|t| !t.is_empty());
         let bracketed = self.tabs[idx].term.modes().bracketed_paste;
 
         if ui
@@ -1398,7 +1467,8 @@ impl AtermApp {
         };
         let cell_at = |pos: egui::Pos2| -> (usize, usize) {
             let local = pos - origin;
-            let col = ((local.x / metrics.width).floor().max(0.0) as usize).min(cols.saturating_sub(1));
+            let col =
+                ((local.x / metrics.width).floor().max(0.0) as usize).min(cols.saturating_sub(1));
             let line =
                 ((local.y / metrics.height).floor().max(0.0) as usize).min(lines.saturating_sub(1));
             (col, line)
@@ -1446,15 +1516,13 @@ impl AtermApp {
                     .input(|i| i.pointer.press_origin())
                     .or_else(|| response.interact_pointer_pos());
                 if let Some(pos) = anchor {
-                    let (point, side) =
-                        pixel_to_point(pos - origin, metrics, offset, cols, lines);
+                    let (point, side) = pixel_to_point(pos - origin, metrics, offset, cols, lines);
                     tab.term.start_selection(point, side);
                     tab.selecting = true;
                 }
             } else if response.dragged() && tab.selecting {
                 if let Some(pos) = response.interact_pointer_pos() {
-                    let (point, side) =
-                        pixel_to_point(pos - origin, metrics, offset, cols, lines);
+                    let (point, side) = pixel_to_point(pos - origin, metrics, offset, cols, lines);
                     tab.term.update_selection(point, side);
                 }
             } else if response.drag_stopped() && tab.selecting {
@@ -1536,7 +1604,9 @@ impl AtermApp {
                 if response.rect.contains(pos) {
                     let (col, line) = cell_at(pos);
                     let mods = ui.input(|i| i.modifiers);
-                    if let Some(bytes) = mouse_report(modes.sgr_mouse, 0, col, line, true, mods, true) {
+                    if let Some(bytes) =
+                        mouse_report(modes.sgr_mouse, 0, col, line, true, mods, true)
+                    {
                         term.write(&bytes);
                     }
                 }
@@ -1555,7 +1625,9 @@ impl AtermApp {
                     let mods = ui.input(|i| i.modifiers);
                     let steps = (scroll_y.abs() / 40.0).max(1.0) as usize;
                     for _ in 0..steps.min(5) {
-                        if let Some(bytes) = mouse_report(modes.sgr_mouse, btn, col, line, true, mods, false) {
+                        if let Some(bytes) =
+                            mouse_report(modes.sgr_mouse, btn, col, line, true, mods, false)
+                        {
                             term.write(&bytes);
                         }
                     }
@@ -1674,7 +1746,11 @@ fn label_w(ui: &mut egui::Ui, text: &str) {
 
 /// Open a URL in the system browser (best-effort).
 fn open_url(url: &str) {
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
     let _ = std::process::Command::new(opener).arg(url).spawn();
 }
 

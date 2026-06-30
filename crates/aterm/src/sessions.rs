@@ -67,7 +67,7 @@ impl ProjectNames {
     }
 
     fn color(&self, path: &str) -> Option<egui::Color32> {
-        self.colors.get(path).and_then(|h| parse_hex(h))
+        self.colors.get(path).and_then(|c| parse_hex(c))
     }
 
     fn set_color(&mut self, path: &str, hex: Option<String>) {
@@ -130,6 +130,10 @@ struct MoveState {
     dest: String,
 }
 
+/// Result of a background full-text search: the query it ran for, plus the set
+/// of `(provider, id)` whose transcript matched.
+type FtsResult = (String, std::collections::HashSet<(String, String)>);
+
 pub struct SessionPanel {
     groups: Vec<ProviderGroup>,
     /// Set once a scan has populated `groups` at least once.
@@ -144,7 +148,7 @@ pub struct SessionPanel {
     /// `(provider, id)` of sessions whose transcript matched `fts_query`.
     fts_matches: std::collections::HashSet<(String, String)>,
     /// In-flight content search.
-    fts_rx: Option<Receiver<(String, std::collections::HashSet<(String, String)>)>>,
+    fts_rx: Option<Receiver<FtsResult>>,
     group_mode: GroupMode,
     /// Active "folder": when set, only sessions carrying this tag are shown.
     tag_filter: Option<String>,
@@ -252,7 +256,7 @@ impl SessionPanel {
         }
         let stale = self
             .last_scan_at
-            .map_or(false, |t| t.elapsed() >= Self::refresh_every());
+            .is_some_and(|t| t.elapsed() >= Self::refresh_every());
         if stale {
             self.start_scan(ctx);
         }
@@ -349,10 +353,18 @@ impl SessionPanel {
             if rescan.on_hover_text("Re-escanear").clicked() {
                 self.start_scan(ui.ctx());
             }
-            if ui.small_button("▾").on_hover_text("Expandir todo").clicked() {
+            if ui
+                .small_button("▾")
+                .on_hover_text("Expandir todo")
+                .clicked()
+            {
                 self.force_open = Some(true);
             }
-            if ui.small_button("▸").on_hover_text("Colapsar todo").clicked() {
+            if ui
+                .small_button("▸")
+                .on_hover_text("Colapsar todo")
+                .clicked()
+            {
                 self.force_open = Some(false);
             }
             if scanning {
@@ -384,7 +396,11 @@ impl SessionPanel {
                     c_teal(),
                     format!("{} coincidencias en contenido", self.fts_matches.len()),
                 );
-                if ui.small_button("✕").on_hover_text("Quitar búsqueda de contenido").clicked() {
+                if ui
+                    .small_button("✕")
+                    .on_hover_text("Quitar búsqueda de contenido")
+                    .clicked()
+                {
                     self.clear_fts();
                 }
             }
@@ -394,7 +410,11 @@ impl SessionPanel {
             ui.label("Agrupar:");
             ui.selectable_value(&mut self.group_mode, GroupMode::Provider, "Proveedor");
             ui.selectable_value(&mut self.group_mode, GroupMode::Project, "Proyecto");
-            ui.selectable_value(&mut self.group_mode, GroupMode::Cascade, "Proveedor › Proyecto");
+            ui.selectable_value(
+                &mut self.group_mode,
+                GroupMode::Cascade,
+                "Proveedor › Proyecto",
+            );
         });
 
         ui.checkbox(&mut self.only_active, "● Solo activas");
@@ -502,11 +522,7 @@ impl SessionPanel {
                         .selected_text(current)
                         .show_ui(ui, |ui| {
                             for (opt, label) in &project_options {
-                                ui.selectable_value(
-                                    &mut self.import_project,
-                                    opt.clone(),
-                                    label,
-                                );
+                                ui.selectable_value(&mut self.import_project, opt.clone(), label);
                             }
                         });
                 });
@@ -550,7 +566,12 @@ impl SessionPanel {
             };
             (!only_active || s.is_active)
                 && text_ok
-                && tag_passes(&self.metadata, g.provider.id(), &s.id, tag_filter.as_deref())
+                && tag_passes(
+                    &self.metadata,
+                    g.provider.id(),
+                    &s.id,
+                    tag_filter.as_deref(),
+                )
         };
         let projects = &self.projects;
         let metadata = &self.metadata;
@@ -560,127 +581,209 @@ impl SessionPanel {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match self.group_mode {
-            GroupMode::Provider => {
-                for (gi, group) in groups.iter().enumerate() {
-                    let provider_id = group.provider.id();
-                    let visible: Vec<usize> =
-                        (0..group.sessions.len()).filter(|si| passes(gi, *si)).collect();
-                    let counts = count_states(visible.iter().map(|si| &group.sessions[*si]));
-                    let title = match &group.error {
-                        Some(err) => egui::RichText::new(format!("{} — {err}", group.display_name)),
-                        None => {
-                            egui::RichText::new(format!("{} ({})", group.display_name, visible.len()))
+                GroupMode::Provider => {
+                    for (gi, group) in groups.iter().enumerate() {
+                        let provider_id = group.provider.id();
+                        let visible: Vec<usize> = (0..group.sessions.len())
+                            .filter(|si| passes(gi, *si))
+                            .collect();
+                        let counts = count_states(visible.iter().map(|si| &group.sessions[*si]));
+                        let title = match &group.error {
+                            Some(err) => {
+                                egui::RichText::new(format!("{} — {err}", group.display_name))
+                            }
+                            None => egui::RichText::new(format!(
+                                "{} ({})",
+                                group.display_name,
+                                visible.len()
+                            )),
                         }
-                    }
-                    .color(provider_color(provider_id))
-                    .strong();
-                    section(ui, ("provider", gi), title, counts, force_open, !visible.is_empty(), |ui| {
-                        if let Some(s) = &group.status {
-                            status_badge(ui, s);
-                        }
-                        if let Some(q) = &group.quota {
-                            quota_badges(ui, q);
-                        }
-                        new_session_pick_project(ui, group, projects, &mut new_session_path, &mut action);
-                        for si in visible {
-                            let s = &group.sessions[si];
-                            row_ui(
-                                ui, s, metadata.get(provider_id, &s.id), provider_id, gi, si, false,
-                                &mut action, &mut to_edit, &mut to_preview, &mut to_export,
-                                &mut to_delete, &mut to_move, &mut to_compact,
-                            );
-                        }
-                    });
-                }
-            }
-            GroupMode::Project => {
-                // Bucket every visible session by working directory, across
-                // providers. BTreeMap keeps the projects sorted.
-                let mut buckets: std::collections::BTreeMap<String, Vec<(usize, usize)>> =
-                    std::collections::BTreeMap::new();
-                for (gi, group) in groups.iter().enumerate() {
-                    for si in 0..group.sessions.len() {
-                        if passes(gi, si) {
-                            buckets.entry(project_key(&group.sessions[si])).or_default().push((gi, si));
-                        }
-                    }
-                }
-                for (bi, (project, items)) in buckets.iter().enumerate() {
-                    let counts =
-                        count_states(items.iter().map(|(gi, si)| &groups[*gi].sessions[*si]));
-                    let title = project_header(projects, project, items.len());
-                    section(ui, ("project", bi), title, counts, force_open, true, |ui| {
-                        project_rename_row(ui, project, &mut to_rename_project);
-                        let proj = (project.as_str() != NO_PROJECT).then(|| project.as_str());
-                        new_session_pick_provider(ui, groups, proj, &mut action);
-                        for (gi, si) in items {
-                            let group = &groups[*gi];
-                            let s = &group.sessions[*si];
-                            row_ui(
-                                ui, s, metadata.get(group.provider.id(), &s.id),
-                                group.provider.id(), *gi, *si, true, &mut action, &mut to_edit,
-                                &mut to_preview, &mut to_export, &mut to_delete, &mut to_move,
-                                &mut to_compact,
-                            );
-                        }
-                    });
-                }
-            }
-            GroupMode::Cascade => {
-                for (gi, group) in groups.iter().enumerate() {
-                    let provider_id = group.provider.id();
-                    let visible: Vec<usize> =
-                        (0..group.sessions.len()).filter(|si| passes(gi, *si)).collect();
-                    let counts = count_states(visible.iter().map(|si| &group.sessions[*si]));
-                    let title = match &group.error {
-                        Some(err) => egui::RichText::new(format!("{} — {err}", group.display_name)),
-                        None => {
-                            egui::RichText::new(format!("{} ({})", group.display_name, visible.len()))
-                        }
-                    }
-                    .color(provider_color(provider_id))
-                    .strong();
-                    section(ui, ("casc-prov", gi), title, counts, force_open, !visible.is_empty(), |ui| {
-                        if let Some(s) = &group.status {
-                            status_badge(ui, s);
-                        }
-                        if let Some(q) = &group.quota {
-                            quota_badges(ui, q);
-                        }
-                        // Sub-bucket this provider's sessions by project.
-                        let mut subs: std::collections::BTreeMap<String, Vec<usize>> =
-                            std::collections::BTreeMap::new();
-                        for si in &visible {
-                            subs.entry(project_key(&group.sessions[*si])).or_default().push(*si);
-                        }
-                        for (pi, (project, sis)) in subs.iter().enumerate() {
-                            let counts = count_states(sis.iter().map(|si| &group.sessions[*si]));
-                            let title = project_header(projects, project, sis.len());
-                            section(ui, ("casc-proj", gi, pi), title, counts, force_open, true, |ui| {
-                                project_rename_row(ui, project, &mut to_rename_project);
-                                // Provider and project both fixed here: open directly.
-                                if ui.button("+ Nueva sesión").clicked() {
-                                    let argv = group.provider.new_session_argv();
-                                    if !argv.is_empty() {
-                                        let cwd = (project.as_str() != NO_PROJECT)
-                                            .then(|| PathBuf::from(project));
-                                        action = Some(PanelAction::Open { argv, cwd, key: None });
-                                    }
+                        .color(provider_color(provider_id))
+                        .strong();
+                        section(
+                            ui,
+                            ("provider", gi),
+                            title,
+                            counts,
+                            force_open,
+                            !visible.is_empty(),
+                            |ui| {
+                                if let Some(s) = &group.status {
+                                    status_badge(ui, s);
                                 }
-                                for si in sis {
-                                    let s = &group.sessions[*si];
+                                if let Some(q) = &group.quota {
+                                    quota_badges(ui, q);
+                                }
+                                new_session_pick_project(
+                                    ui,
+                                    group,
+                                    projects,
+                                    &mut new_session_path,
+                                    &mut action,
+                                );
+                                for si in visible {
+                                    let s = &group.sessions[si];
                                     row_ui(
-                                        ui, s, metadata.get(provider_id, &s.id), provider_id, gi,
-                                        *si, false, &mut action, &mut to_edit, &mut to_preview,
-                                        &mut to_export, &mut to_delete, &mut to_move, &mut to_compact,
+                                        ui,
+                                        s,
+                                        metadata.get(provider_id, &s.id),
+                                        provider_id,
+                                        gi,
+                                        si,
+                                        false,
+                                        &mut action,
+                                        &mut to_edit,
+                                        &mut to_preview,
+                                        &mut to_export,
+                                        &mut to_delete,
+                                        &mut to_move,
+                                        &mut to_compact,
                                     );
                                 }
-                            });
-                        }
-                    });
+                            },
+                        );
+                    }
                 }
-            }
-        });
+                GroupMode::Project => {
+                    // Bucket every visible session by working directory, across
+                    // providers. BTreeMap keeps the projects sorted.
+                    let mut buckets: std::collections::BTreeMap<String, Vec<(usize, usize)>> =
+                        std::collections::BTreeMap::new();
+                    for (gi, group) in groups.iter().enumerate() {
+                        for si in 0..group.sessions.len() {
+                            if passes(gi, si) {
+                                buckets
+                                    .entry(project_key(&group.sessions[si]))
+                                    .or_default()
+                                    .push((gi, si));
+                            }
+                        }
+                    }
+                    for (bi, (project, items)) in buckets.iter().enumerate() {
+                        let counts =
+                            count_states(items.iter().map(|(gi, si)| &groups[*gi].sessions[*si]));
+                        let title = project_header(projects, project, items.len());
+                        section(ui, ("project", bi), title, counts, force_open, true, |ui| {
+                            project_rename_row(ui, project, &mut to_rename_project);
+                            let proj = (project.as_str() != NO_PROJECT).then_some(project.as_str());
+                            new_session_pick_provider(ui, groups, proj, &mut action);
+                            for (gi, si) in items {
+                                let group = &groups[*gi];
+                                let s = &group.sessions[*si];
+                                row_ui(
+                                    ui,
+                                    s,
+                                    metadata.get(group.provider.id(), &s.id),
+                                    group.provider.id(),
+                                    *gi,
+                                    *si,
+                                    true,
+                                    &mut action,
+                                    &mut to_edit,
+                                    &mut to_preview,
+                                    &mut to_export,
+                                    &mut to_delete,
+                                    &mut to_move,
+                                    &mut to_compact,
+                                );
+                            }
+                        });
+                    }
+                }
+                GroupMode::Cascade => {
+                    for (gi, group) in groups.iter().enumerate() {
+                        let provider_id = group.provider.id();
+                        let visible: Vec<usize> = (0..group.sessions.len())
+                            .filter(|si| passes(gi, *si))
+                            .collect();
+                        let counts = count_states(visible.iter().map(|si| &group.sessions[*si]));
+                        let title = match &group.error {
+                            Some(err) => {
+                                egui::RichText::new(format!("{} — {err}", group.display_name))
+                            }
+                            None => egui::RichText::new(format!(
+                                "{} ({})",
+                                group.display_name,
+                                visible.len()
+                            )),
+                        }
+                        .color(provider_color(provider_id))
+                        .strong();
+                        section(
+                            ui,
+                            ("casc-prov", gi),
+                            title,
+                            counts,
+                            force_open,
+                            !visible.is_empty(),
+                            |ui| {
+                                if let Some(s) = &group.status {
+                                    status_badge(ui, s);
+                                }
+                                if let Some(q) = &group.quota {
+                                    quota_badges(ui, q);
+                                }
+                                // Sub-bucket this provider's sessions by project.
+                                let mut subs: std::collections::BTreeMap<String, Vec<usize>> =
+                                    std::collections::BTreeMap::new();
+                                for si in &visible {
+                                    subs.entry(project_key(&group.sessions[*si]))
+                                        .or_default()
+                                        .push(*si);
+                                }
+                                for (pi, (project, sis)) in subs.iter().enumerate() {
+                                    let counts =
+                                        count_states(sis.iter().map(|si| &group.sessions[*si]));
+                                    let title = project_header(projects, project, sis.len());
+                                    section(
+                                        ui,
+                                        ("casc-proj", gi, pi),
+                                        title,
+                                        counts,
+                                        force_open,
+                                        true,
+                                        |ui| {
+                                            project_rename_row(ui, project, &mut to_rename_project);
+                                            // Provider and project both fixed here: open directly.
+                                            if ui.button("+ Nueva sesión").clicked() {
+                                                let argv = group.provider.new_session_argv();
+                                                if !argv.is_empty() {
+                                                    let cwd = (project.as_str() != NO_PROJECT)
+                                                        .then(|| PathBuf::from(project));
+                                                    action = Some(PanelAction::Open {
+                                                        argv,
+                                                        cwd,
+                                                        key: None,
+                                                    });
+                                                }
+                                            }
+                                            for si in sis {
+                                                let s = &group.sessions[*si];
+                                                row_ui(
+                                                    ui,
+                                                    s,
+                                                    metadata.get(provider_id, &s.id),
+                                                    provider_id,
+                                                    gi,
+                                                    *si,
+                                                    false,
+                                                    &mut action,
+                                                    &mut to_edit,
+                                                    &mut to_preview,
+                                                    &mut to_export,
+                                                    &mut to_delete,
+                                                    &mut to_move,
+                                                    &mut to_compact,
+                                                );
+                                            }
+                                        },
+                                    );
+                                }
+                            },
+                        );
+                    }
+                }
+            });
 
         // Apply deferred mutations outside the borrow of `self.groups`.
         if let Some((provider, id)) = to_edit {
@@ -709,7 +812,11 @@ impl SessionPanel {
             if let Some(argv) = g.provider.compact_argv(&session_id) {
                 let cwd = g.sessions[si].cwd.as_ref().map(PathBuf::from);
                 // Opens a one-off terminal running `/compact`; not a resume.
-                action = Some(PanelAction::Open { argv, cwd, key: None });
+                action = Some(PanelAction::Open {
+                    argv,
+                    cwd,
+                    key: None,
+                });
             }
         }
         if let Some(path) = to_rename_project {
@@ -817,9 +924,8 @@ impl SessionPanel {
         match result {
             Ok(()) => {
                 self.status = Some(format!("Eliminada {session_id}"));
-                self.metadata.update(&provider_id, &session_id, |m| {
-                    *m = Default::default()
-                });
+                self.metadata
+                    .update(&provider_id, &session_id, |m| *m = Default::default());
                 self.save_metadata();
                 self.groups[gi].sessions.remove(si);
             }
@@ -913,7 +1019,11 @@ impl SessionPanel {
                     ];
                     for (name, c) in swatches {
                         if ui
-                            .add(egui::Button::new("  ").fill(c).min_size(egui::vec2(22.0, 18.0)))
+                            .add(
+                                egui::Button::new("  ")
+                                    .fill(c)
+                                    .min_size(egui::vec2(22.0, 18.0)),
+                            )
                             .on_hover_text(name)
                             .clicked()
                         {
@@ -964,8 +1074,7 @@ impl SessionPanel {
             .iter()
             .find(|g| g.provider.id() == "claude")
             .map(|g| {
-                let mut v: Vec<String> =
-                    g.sessions.iter().filter_map(|s| s.cwd.clone()).collect();
+                let mut v: Vec<String> = g.sessions.iter().filter_map(|s| s.cwd.clone()).collect();
                 v.sort();
                 v.dedup();
                 v
@@ -991,7 +1100,8 @@ impl SessionPanel {
                 let trimmed = mv.dest.trim().to_string();
                 if !trimmed.is_empty() && !std::path::Path::new(&trimmed).is_dir() {
                     for c in path_candidates(&trimmed) {
-                        if c != trimmed && ui.selectable_label(false, completion_label(&c)).clicked()
+                        if c != trimmed
+                            && ui.selectable_label(false, completion_label(&c)).clicked()
                         {
                             mv.dest = c;
                         }
@@ -1116,7 +1226,10 @@ fn row_ui(
                         key: Some(format!("{provider_id}:{}", s.id)),
                     });
                 }
-                if let Some(dot) = meta.and_then(|m| m.color.as_ref()).and_then(parse_hex) {
+                if let Some(dot) = meta
+                    .and_then(|m| m.color.as_ref())
+                    .and_then(|c| parse_hex(c))
+                {
                     ui.colored_label(dot, "●");
                 }
                 if s.is_active {
@@ -1174,13 +1287,21 @@ fn row_ui(
             }
 
             ui.horizontal(|ui| {
-                if ui.small_button("✏").on_hover_text("Renombrar / tags / color").clicked() {
+                if ui
+                    .small_button("✏")
+                    .on_hover_text("Renombrar / tags / color")
+                    .clicked()
+                {
                     *to_edit = Some((provider_id.to_string(), s.id.clone()));
                 }
                 if ui.small_button("◉").on_hover_text("Preview").clicked() {
                     *to_preview = Some((provider_id.to_string(), s.id.clone(), name.clone()));
                 }
-                if ui.small_button("⇩").on_hover_text("Exportar .zip").clicked() {
+                if ui
+                    .small_button("⇩")
+                    .on_hover_text("Exportar .zip")
+                    .clicked()
+                {
                     *to_export = Some((gi, si));
                 }
                 // Compact / move — Claude only.
@@ -1193,7 +1314,11 @@ fn row_ui(
                         *to_compact = Some((gi, si));
                     }
                     if let Some(cwd) = &s.cwd {
-                        if ui.small_button("⇄").on_hover_text("Mover a otro proyecto").clicked() {
+                        if ui
+                            .small_button("⇄")
+                            .on_hover_text("Mover a otro proyecto")
+                            .clicked()
+                        {
                             *to_move = Some((s.id.clone(), cwd.clone(), s.is_active));
                         }
                     }
@@ -1252,8 +1377,14 @@ fn scan_all_providers() -> Vec<ProviderGroup> {
 fn status_badge(ui: &mut egui::Ui, status: &agent_sessions::types::ServiceStatus) {
     let (color, label) = match status.indicator.as_str() {
         "none" => (c_green(), "operativo"),
-        "minor" => (egui::Color32::from_rgb(0xf9, 0xe2, 0xaf), "incidencia menor"),
-        "major" => (egui::Color32::from_rgb(0xfa, 0xb3, 0x87), "incidencia grave"),
+        "minor" => (
+            egui::Color32::from_rgb(0xf9, 0xe2, 0xaf),
+            "incidencia menor",
+        ),
+        "major" => (
+            egui::Color32::from_rgb(0xfa, 0xb3, 0x87),
+            "incidencia grave",
+        ),
         "critical" => (egui::Color32::from_rgb(0xf3, 0x8b, 0xa8), "caída"),
         _ => (egui::Color32::GRAY, "estado desconocido"),
     };
@@ -1303,9 +1434,7 @@ fn matches_filter(
     {
         return true;
     }
-    meta.map_or(false, |m| {
-        m.tags.iter().any(|t| t.to_lowercase().contains(filter))
-    })
+    meta.is_some_and(|m| m.tags.iter().any(|t| t.to_lowercase().contains(filter)))
 }
 
 /// Whether a session passes the active tag "folder" (None = no folder filter).
@@ -1319,7 +1448,7 @@ fn tag_passes(
         None => true,
         Some(tag) => metadata
             .get(provider_id, id)
-            .map_or(false, |m| m.tags.iter().any(|t| t == tag)),
+            .is_some_and(|m| m.tags.iter().any(|t| t == tag)),
     }
 }
 
@@ -1390,7 +1519,9 @@ fn project_header(projects: &ProjectNames, path: &str, count: usize) -> egui::Ri
         .map(str::to_string)
         .unwrap_or_else(|| display_path(path));
     let color = projects.color(path).unwrap_or_else(c_teal);
-    egui::RichText::new(format!("{label} ({count})")).color(color).strong()
+    egui::RichText::new(format!("{label} ({count})"))
+        .color(color)
+        .strong()
 }
 
 /// Live-session tally split by reported state, for the section headers.
@@ -1445,8 +1576,11 @@ fn section(
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let id = ui.make_persistent_id(salt);
-    let mut state =
-        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        id,
+        default_open,
+    );
     if let Some(open) = force_open {
         state.set_open(open);
     }
@@ -1474,7 +1608,10 @@ fn new_session_pick_provider(
                 continue;
             }
             if ui
-                .button(egui::RichText::new(&group.display_name).color(provider_color(group.provider.id())))
+                .button(
+                    egui::RichText::new(&group.display_name)
+                        .color(provider_color(group.provider.id())),
+                )
                 .clicked()
             {
                 *action = Some(PanelAction::Open {
@@ -1615,7 +1752,7 @@ fn relative_time(unix_secs: f64) -> String {
     }
 }
 
-fn parse_hex(hex: &String) -> Option<egui::Color32> {
+fn parse_hex(hex: &str) -> Option<egui::Color32> {
     let h = hex.trim_start_matches('#');
     if h.len() != 6 {
         return None;

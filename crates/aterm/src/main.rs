@@ -11,8 +11,8 @@
 mod app;
 mod persist;
 mod service_status;
-mod settings;
 mod sessions;
+mod settings;
 mod term;
 mod theme;
 

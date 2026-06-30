@@ -149,7 +149,7 @@ pub fn draw(
             fg = dim(fg);
         }
 
-        let selected = selection.map_or(false, |r| r.contains(point));
+        let selected = selection.is_some_and(|r| r.contains(point));
         if selected {
             // Solapamos el rect con el vecino (+1px abajo/derecha): con anchos de
             // celda fraccionarios, rects contiguos dejan huecos de subpíxel donde
@@ -187,7 +187,11 @@ pub fn draw(
         if let Some((ll, ls, le)) = link_span {
             if line as usize == ll && col >= ls && col < le {
                 let link = color32(to_rgb(theme.blue));
-                painter.hline(cell_rect.x_range(), cell_rect.bottom() - 1.0, Stroke::new(1.5, link));
+                painter.hline(
+                    cell_rect.x_range(),
+                    cell_rect.bottom() - 1.0,
+                    Stroke::new(1.5, link),
+                );
             }
         }
     }
