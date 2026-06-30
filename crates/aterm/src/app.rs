@@ -965,204 +965,216 @@ impl eframe::App for AtermApp {
 
         // Header first → it spans the full width on top; the session panel sits
         // *below* it on the left (so the sidebar never overlaps the header).
-        egui::TopBottomPanel::top("header").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui
-                    .selectable_label(self.panel_open, "☰")
-                    .on_hover_text("Mostrar/ocultar el panel de sesiones")
-                    .clicked()
-                {
-                    self.panel_open = !self.panel_open;
-                }
-                ui.separator();
-                if ui.button(">_").on_hover_text("Nueva shell").clicked() {
-                    pending_open = Some((shell_argv(), shell_dir(), None));
-                }
-                ui.separator();
-                // Pro: parallel worktree compare. The ⚡ opens the launch
-                // dialog; the ▽ menu holds compare/cleanup.
-                if ui
-                    .button("⚡")
-                    .on_hover_text("Comparativa paralela (Pro): lanza N agentes en worktrees")
-                    .clicked()
-                {
-                    pro_action = Some(ProAction::Parallel);
-                }
-                ui.menu_button("▽", |ui| {
-                    if ui.button("Comparar worktrees").clicked() {
-                        pro_action = Some(ProAction::Compare);
-                        ui.close_menu();
-                    }
-                    if ui.button("Limpiar worktrees…").clicked() {
-                        pro_action = Some(ProAction::Cleanup);
-                        ui.close_menu();
-                    }
+        let hpal = crate::theme::pal();
+        let header_frame = egui::Frame::none()
+            .fill(hpal.mantle)
+            .inner_margin(egui::Margin::symmetric(8.0, 6.0));
+        egui::TopBottomPanel::top("header")
+            .frame(header_frame)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    crate::theme::brand(ui);
+                    ui.add_space(4.0);
                     ui.separator();
-                    if ui.button("✦ Funciones Pro…").clicked() {
-                        pro_action = Some(ProAction::Features);
-                        ui.close_menu();
-                    }
-                });
-                ui.separator();
-                let mut to_close = None;
-                let mut to_focus = None;
-                let mut to_split = None;
-                let mut to_edit_tab = None;
-                let mut to_detach = None;
-                // Each tab label's horizontal extent, to resolve a drop by x.
-                let mut rects: Vec<(u64, egui::Rect)> = Vec::new();
-                for tab in &self.tabs {
-                    let id = tab.id;
-                    let shown = self.visible.contains(&id);
-                    // Bell on an unfocused tab → attention marker + colour.
-                    let bell = id != self.focused && tab.term.bell_rung();
-                    // User name overrides the child title.
-                    let base = truncate(tab.name.as_deref().unwrap_or(&tab.term.title()), 22);
-                    let label = if bell { format!("• {base}") } else { base };
-                    let mut text = egui::RichText::new(label);
-                    // Bell > custom colour > focused accent.
-                    if bell {
-                        text = text.color(crate::theme::pal().peach);
-                    } else if let Some(c) = tab.color {
-                        text = text.color(c);
-                    } else if id == self.focused {
-                        text = text.color(egui::Color32::from_rgb(0xb4, 0xbe, 0xfe));
-                    }
-                    if self.dragging == Some(id) {
-                        text = text.italics();
-                    }
-                    // Make the label sense dragging as well as clicking.
-                    let resp = ui
-                        .selectable_label(shown, text)
-                        .interact(egui::Sense::click_and_drag())
-                        .on_hover_text(
-                            "Click: enfocar · arrastra: reordenar · clic dcho: renombrar",
-                        );
-                    rects.push((id, resp.rect));
-                    if resp.clicked() {
-                        to_focus = Some(id);
-                    }
-                    if resp.secondary_clicked() {
-                        to_edit_tab = Some(id);
-                    }
-                    if resp.drag_started() {
-                        self.dragging = Some(id);
-                    }
-                    // Split toggle: highlighted while this terminal is on the
-                    // grid. Disabled when it's the only visible one (nothing to
-                    // split against) — that was the "does nothing" case.
-                    let can_split = !shown || self.visible.len() > 1;
-                    let split_resp = ui
-                        .add_enabled(can_split, egui::SelectableLabel::new(shown, "⊞"))
-                        .on_hover_text(if shown {
-                            "Quitar del split"
-                        } else {
-                            "Ver en split junto a las demás"
-                        });
-                    if split_resp.clicked() {
-                        to_split = Some(id);
-                    }
-                    let detached = self.tabs.iter().any(|t| t.id == id && t.detached);
                     if ui
-                        .selectable_label(detached, "⇱")
-                        .on_hover_text(if detached {
-                            "Traer de vuelta a la ventana"
-                        } else {
-                            "Abrir en ventana nueva"
-                        })
+                        .selectable_label(self.panel_open, "☰")
+                        .on_hover_text("Mostrar/ocultar el panel de sesiones")
                         .clicked()
                     {
-                        to_detach = Some(id);
+                        self.panel_open = !self.panel_open;
                     }
-                    if ui.small_button("×").on_hover_text("Cerrar").clicked() {
-                        to_close = Some(id);
+                    if ui.button(">_").on_hover_text("Nueva shell").clicked() {
+                        pending_open = Some((shell_argv(), shell_dir(), None));
                     }
                     ui.separator();
-                }
-                if let Some(id) = to_detach {
-                    self.toggle_detach(id);
-                }
-                if let Some(id) = to_edit_tab {
-                    if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
-                        self.tab_edit = Some(TabEdit {
-                            id,
-                            name: t.name.clone().unwrap_or_default(),
-                        });
+                    // Active tab gets an accent-tinted pill fill.
+                    ui.visuals_mut().selection.bg_fill = hpal.blue.gamma_multiply(0.30);
+                    ui.visuals_mut().selection.stroke =
+                        egui::Stroke::new(1.0, hpal.blue.gamma_multiply(0.7));
+                    // Pro: parallel worktree compare. The ⚡ opens the launch
+                    // dialog; the ▽ menu holds compare/cleanup.
+                    if ui
+                        .button("⚡")
+                        .on_hover_text("Comparativa paralela (Pro): lanza N agentes en worktrees")
+                        .clicked()
+                    {
+                        pro_action = Some(ProAction::Parallel);
                     }
-                }
-
-                // Resolve a drag once the button is no longer held (robust:
-                // doesn't depend on catching the exact release frame, so the
-                // drag state never gets stuck and blocks later clicks).
-                if let Some(src) = self.dragging {
-                    let held = ui.input(|i| i.pointer.any_down());
-                    if held {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                    } else {
-                        let px = ui
-                            .input(|i| i.pointer.interact_pos().or(i.pointer.latest_pos()))
-                            .map(|p| p.x)
-                            .unwrap_or(f32::INFINITY);
-                        let on_self = rects
-                            .iter()
-                            .find(|(id, _)| *id == src)
-                            .is_some_and(|(_, r)| px >= r.left() && px <= r.right());
-                        if on_self {
-                            // Released over itself → it was really a click.
-                            to_focus = Some(src);
-                        } else {
-                            let before = rects
-                                .iter()
-                                .find(|(_, r)| px < r.center().x)
-                                .map(|(id, _)| *id);
-                            self.move_tab(src, before);
+                    ui.menu_button("▽", |ui| {
+                        if ui.button("Comparar worktrees").clicked() {
+                            pro_action = Some(ProAction::Compare);
+                            ui.close_menu();
                         }
-                        self.dragging = None;
-                    }
-                }
-
-                if let Some(id) = to_focus {
-                    self.focus_tab(id);
-                }
-                if let Some(id) = to_split {
-                    self.toggle_split(id);
-                }
-                if let Some(id) = to_close {
-                    self.request_close(id);
-                }
-
-                // Settings cog + licence badge, pushed to the right edge.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("⚙").on_hover_text("Ajustes").clicked() {
-                        self.settings_open = true;
-                    }
+                        if ui.button("Limpiar worktrees…").clicked() {
+                            pro_action = Some(ProAction::Cleanup);
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        if ui.button("✦ Funciones Pro…").clicked() {
+                            pro_action = Some(ProAction::Features);
+                            ui.close_menu();
+                        }
+                    });
                     ui.separator();
-                    // Licence as a coloured pill: green (Pro) / yellow (trial) /
-                    // grey (Community).
-                    let pal = crate::theme::pal();
-                    let fill = match crate::license::status() {
-                        crate::license::Status::Licensed => pal.green,
-                        crate::license::Status::Trial { .. } => pal.yellow,
-                        crate::license::Status::Expired => pal.surface2,
-                    };
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new(crate::license::badge())
-                                    .color(egui::Color32::BLACK)
-                                    .small(),
-                            )
-                            .fill(fill)
-                            .rounding(10.0),
-                        )
-                        .on_hover_text("Estado de la licencia / activar Pro")
-                        .clicked()
-                    {
-                        pro_action = Some(ProAction::License);
+                    let mut to_close = None;
+                    let mut to_focus = None;
+                    let mut to_split = None;
+                    let mut to_edit_tab = None;
+                    let mut to_detach = None;
+                    // Each tab label's horizontal extent, to resolve a drop by x.
+                    let mut rects: Vec<(u64, egui::Rect)> = Vec::new();
+                    for tab in &self.tabs {
+                        let id = tab.id;
+                        let shown = self.visible.contains(&id);
+                        // Bell on an unfocused tab → attention marker + colour.
+                        let bell = id != self.focused && tab.term.bell_rung();
+                        // User name overrides the child title.
+                        let base = truncate(tab.name.as_deref().unwrap_or(&tab.term.title()), 22);
+                        let label = if bell { format!("• {base}") } else { base };
+                        let mut text = egui::RichText::new(label);
+                        // Bell > custom colour > focused accent.
+                        if bell {
+                            text = text.color(crate::theme::pal().peach);
+                        } else if let Some(c) = tab.color {
+                            text = text.color(c);
+                        } else if id == self.focused {
+                            text = text.color(egui::Color32::from_rgb(0xb4, 0xbe, 0xfe));
+                        }
+                        if self.dragging == Some(id) {
+                            text = text.italics();
+                        }
+                        // Make the label sense dragging as well as clicking.
+                        let resp = ui
+                            .selectable_label(shown, text)
+                            .interact(egui::Sense::click_and_drag())
+                            .on_hover_text(
+                                "Click: enfocar · arrastra: reordenar · clic dcho: renombrar",
+                            );
+                        rects.push((id, resp.rect));
+                        if resp.clicked() {
+                            to_focus = Some(id);
+                        }
+                        if resp.secondary_clicked() {
+                            to_edit_tab = Some(id);
+                        }
+                        if resp.drag_started() {
+                            self.dragging = Some(id);
+                        }
+                        // Split toggle: highlighted while this terminal is on the
+                        // grid. Disabled when it's the only visible one (nothing to
+                        // split against) — that was the "does nothing" case.
+                        let can_split = !shown || self.visible.len() > 1;
+                        let split_resp = ui
+                            .add_enabled(can_split, egui::SelectableLabel::new(shown, "⊞"))
+                            .on_hover_text(if shown {
+                                "Quitar del split"
+                            } else {
+                                "Ver en split junto a las demás"
+                            });
+                        if split_resp.clicked() {
+                            to_split = Some(id);
+                        }
+                        let detached = self.tabs.iter().any(|t| t.id == id && t.detached);
+                        if ui
+                            .selectable_label(detached, "⇱")
+                            .on_hover_text(if detached {
+                                "Traer de vuelta a la ventana"
+                            } else {
+                                "Abrir en ventana nueva"
+                            })
+                            .clicked()
+                        {
+                            to_detach = Some(id);
+                        }
+                        if ui.small_button("×").on_hover_text("Cerrar").clicked() {
+                            to_close = Some(id);
+                        }
+                        ui.separator();
                     }
+                    if let Some(id) = to_detach {
+                        self.toggle_detach(id);
+                    }
+                    if let Some(id) = to_edit_tab {
+                        if let Some(t) = self.tabs.iter().find(|t| t.id == id) {
+                            self.tab_edit = Some(TabEdit {
+                                id,
+                                name: t.name.clone().unwrap_or_default(),
+                            });
+                        }
+                    }
+
+                    // Resolve a drag once the button is no longer held (robust:
+                    // doesn't depend on catching the exact release frame, so the
+                    // drag state never gets stuck and blocks later clicks).
+                    if let Some(src) = self.dragging {
+                        let held = ui.input(|i| i.pointer.any_down());
+                        if held {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                        } else {
+                            let px = ui
+                                .input(|i| i.pointer.interact_pos().or(i.pointer.latest_pos()))
+                                .map(|p| p.x)
+                                .unwrap_or(f32::INFINITY);
+                            let on_self = rects
+                                .iter()
+                                .find(|(id, _)| *id == src)
+                                .is_some_and(|(_, r)| px >= r.left() && px <= r.right());
+                            if on_self {
+                                // Released over itself → it was really a click.
+                                to_focus = Some(src);
+                            } else {
+                                let before = rects
+                                    .iter()
+                                    .find(|(_, r)| px < r.center().x)
+                                    .map(|(id, _)| *id);
+                                self.move_tab(src, before);
+                            }
+                            self.dragging = None;
+                        }
+                    }
+
+                    if let Some(id) = to_focus {
+                        self.focus_tab(id);
+                    }
+                    if let Some(id) = to_split {
+                        self.toggle_split(id);
+                    }
+                    if let Some(id) = to_close {
+                        self.request_close(id);
+                    }
+
+                    // Settings cog + licence badge, pushed to the right edge.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("⚙").on_hover_text("Ajustes").clicked() {
+                            self.settings_open = true;
+                        }
+                        ui.separator();
+                        // Licence as a coloured pill: green (Pro) / yellow (trial) /
+                        // grey (Community).
+                        let pal = crate::theme::pal();
+                        let fill = match crate::license::status() {
+                            crate::license::Status::Licensed => pal.green,
+                            crate::license::Status::Trial { .. } => pal.yellow,
+                            crate::license::Status::Expired => pal.surface2,
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(crate::license::badge())
+                                        .color(egui::Color32::BLACK)
+                                        .small(),
+                                )
+                                .fill(fill)
+                                .rounding(10.0),
+                            )
+                            .on_hover_text("Estado de la licencia / activar Pro")
+                            .clicked()
+                        {
+                            pro_action = Some(ProAction::License);
+                        }
+                    });
                 });
             });
-        });
 
         egui::SidePanel::left("sessions")
             .resizable(true)

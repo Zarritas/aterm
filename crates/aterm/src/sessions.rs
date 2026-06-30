@@ -1626,7 +1626,7 @@ impl SessionPanel {
                     }
                 });
                 ui.horizontal(|ui| {
-                    if ui.button("Guardar").clicked() {
+                    if crate::theme::primary_button(ui, "Guardar").clicked() {
                         save = true;
                     }
                     if ui.button("Cancelar").clicked() {
@@ -1949,7 +1949,7 @@ impl SessionPanel {
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Guardar").clicked() {
+                    if crate::theme::primary_button(ui, "Guardar").clicked() {
                         save = true;
                     }
                     if ui.button("Cancelar").clicked() {
@@ -2178,7 +2178,8 @@ fn row_ui(
                     ui.colored_label(color, "●").on_hover_text(tip);
                 }
                 if show_provider {
-                    ui.colored_label(provider_color(provider_id), format!("[{provider_id}]"));
+                    let pc = provider_color(provider_id);
+                    crate::theme::pill(ui, provider_id, pc.gamma_multiply(0.22), pc);
                 }
                 if meta.is_some_and(|m| m.favorite) {
                     ui.colored_label(crate::theme::pal().yellow, "★")

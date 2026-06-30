@@ -365,6 +365,40 @@ pub fn muted(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).color(pal().overlay).small());
 }
 
+/// A filled accent button for the primary action of a dialog/toolbar.
+pub fn primary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let p = pal();
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).color(p.crust).strong())
+            .fill(p.blue)
+            .rounding(RADIUS),
+    )
+}
+
+/// Draw a small rounded "pill" with `fg` text on a `fill` background.
+pub fn pill(ui: &mut egui::Ui, text: &str, fill: Color32, fg: Color32) -> egui::Response {
+    egui::Frame::none()
+        .fill(fill)
+        .rounding(999.0)
+        .inner_margin(egui::Margin::symmetric(8.0, 2.0))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).color(fg).small().strong());
+        })
+        .response
+}
+
+/// The brand mark for the chrome ("◆ aterm").
+pub fn brand(ui: &mut egui::Ui) {
+    let p = pal();
+    ui.label(egui::RichText::new("◆").color(p.blue).size(15.0));
+    ui.label(
+        egui::RichText::new("aterm")
+            .color(p.text)
+            .strong()
+            .size(15.0),
+    );
+}
+
 /// Build egui's `Style`/`Visuals` from the active palette.
 pub fn apply(ctx: &egui::Context) {
     use egui::{Rounding, Stroke};
