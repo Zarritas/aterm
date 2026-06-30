@@ -441,8 +441,13 @@ impl SessionPanel {
         let scanning = self.scan_rx.is_some();
         let mut action = None;
 
+        let total_sessions: usize = self.groups.iter().map(|g| g.sessions.len()).sum();
         ui.horizontal(|ui| {
             ui.heading(egui::RichText::new("Agent sessions").color(c_lavender()));
+            if total_sessions > 0 {
+                let pal = crate::theme::pal();
+                crate::theme::pill(ui, &total_sessions.to_string(), pal.surface1, pal.text);
+            }
             let rescan = ui.add_enabled(!scanning, egui::Button::new("⟳"));
             if rescan.on_hover_text("Re-escanear").clicked() {
                 self.start_scan(ui.ctx());
