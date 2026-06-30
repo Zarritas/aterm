@@ -740,9 +740,19 @@ impl SessionPanel {
                             Vec::new()
                         };
                     let popup_id = ui.make_persistent_id("import-autocomplete");
+                    // Tab completes to the first suggestion (keeps the field
+                    // focused so the next level shows immediately).
+                    if resp.has_focus()
+                        && !candidates.is_empty()
+                        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab))
+                    {
+                        self.import_path = candidates[0].clone();
+                        resp.request_focus();
+                    }
                     if resp.has_focus() && !candidates.is_empty() {
                         ui.memory_mut(|m| m.open_popup(popup_id));
                     }
+                    let mut picked = false;
                     egui::popup::popup_below_widget(
                         ui,
                         popup_id,
@@ -753,11 +763,16 @@ impl SessionPanel {
                             for c in candidates {
                                 if ui.selectable_label(false, completion_label(&c)).clicked() {
                                     self.import_path = c;
-                                    ui.memory_mut(|m| m.close_popup());
+                                    picked = true;
                                 }
                             }
                         },
                     );
+                    // Keep the field focused after a pick so you can keep
+                    // drilling down without clicking back into it.
+                    if picked {
+                        resp.request_focus();
+                    }
                 }
 
                 ui.add_space(6.0);
