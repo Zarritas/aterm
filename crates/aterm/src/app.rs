@@ -656,6 +656,11 @@ impl eframe::App for AtermApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut pending_open: Option<(Vec<String>, Option<std::path::PathBuf>, Option<String>)> =
             None;
+        let mut pending_template: Option<(
+            Vec<String>,
+            Option<std::path::PathBuf>,
+            Option<String>,
+        )> = None;
 
         // Stash this frame's context so `ProHost::open_agent` (no ctx arg) can
         // spawn terminals, then fire any prompt injections whose timer elapsed.
@@ -935,14 +940,28 @@ impl eframe::App for AtermApp {
         egui::SidePanel::left("sessions")
             .resizable(true)
             .default_width(380.0)
-            .show_animated(ctx, self.panel_open, |ui| {
-                if let Some(PanelAction::Open { argv, cwd, key }) = self.panel.ui(ui) {
+            .show_animated(ctx, self.panel_open, |ui| match self.panel.ui(ui) {
+                Some(PanelAction::Open { argv, cwd, key }) => {
                     pending_open = Some((argv, cwd, key));
                 }
+                Some(PanelAction::OpenTemplate { argv, cwd, prompt }) => {
+                    pending_template = Some((argv, cwd, prompt));
+                }
+                None => {}
             });
 
         if let Some((argv, cwd, key)) = pending_open {
             self.open_tab(ctx, argv, cwd, key);
+        }
+        if let Some((argv, cwd, prompt)) = pending_template {
+            if let Some(tab_id) = self.open_tab(ctx, argv, cwd, None) {
+                if let Some(p) = prompt {
+                    if !p.trim().is_empty() {
+                        let at = std::time::Instant::now() + std::time::Duration::from_millis(2500);
+                        self.deferred_writes.push((tab_id, p.into_bytes(), at));
+                    }
+                }
+            }
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {

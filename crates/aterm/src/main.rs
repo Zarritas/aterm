@@ -15,6 +15,7 @@ mod pro;
 mod service_status;
 mod sessions;
 mod settings;
+mod templates;
 mod term;
 mod theme;
 

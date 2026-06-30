@@ -93,6 +93,13 @@ pub enum PanelAction {
         /// fresh shells / new sessions, which may be opened repeatedly.
         key: Option<String>,
     },
+    /// Launch a saved template: open `argv` in `cwd`, then inject `prompt`
+    /// (after a short delay, no Enter — the user reviews it) when non-empty.
+    OpenTemplate {
+        argv: Vec<String>,
+        cwd: Option<PathBuf>,
+        prompt: Option<String>,
+    },
 }
 
 /// One provider's scan result plus the live trait object (for preview/delete/
@@ -178,6 +185,22 @@ pub struct SessionPanel {
     /// per-provider new-session menus; transient).
     new_session_path: String,
     status: Option<String>,
+    /// Saved launch templates (shared file with the sidecar/extension).
+    templates: crate::templates::TemplateStore,
+    /// Whether the templates manager window is open.
+    templates_open: bool,
+    /// In-flight "save new template" form (when `Some`, the form is shown).
+    template_form: Option<TemplateForm>,
+}
+
+/// Draft fields for the "save a launch template" form.
+#[derive(Default)]
+struct TemplateForm {
+    name: String,
+    provider: String,
+    prompt: String,
+    cwd: String,
+    tags: String,
 }
 
 impl Default for SessionPanel {
@@ -212,6 +235,9 @@ impl Default for SessionPanel {
             import_project: None,
             new_session_path: String::new(),
             status: None,
+            templates: crate::templates::TemplateStore::load(),
+            templates_open: false,
+            template_form: None,
         }
     }
 }
@@ -419,7 +445,16 @@ impl SessionPanel {
             );
         });
 
-        ui.checkbox(&mut self.only_active, "● Solo activas");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.only_active, "● Solo activas");
+            if ui
+                .button("📋 Plantillas")
+                .on_hover_text("Guardar / lanzar plantillas de sesión")
+                .clicked()
+            {
+                self.templates_open = true;
+            }
+        });
 
         // Tag "folders": a row of chips that filter to one tag at a time.
         let tags = self.metadata.all_tags();
@@ -846,6 +881,9 @@ impl SessionPanel {
         self.project_window(ui.ctx());
         self.move_window(ui.ctx());
         self.preview_window(ui.ctx());
+        if let Some(a) = self.templates_window(ui.ctx()) {
+            action = Some(a);
+        }
 
         action
     }
@@ -1017,6 +1055,162 @@ impl SessionPanel {
         } else if cancel || !open {
             self.edit = None;
         }
+    }
+
+    /// The templates manager: list saved recipes (launch/delete) and a form to
+    /// save a new one. Returns a launch action when the user fires a template.
+    fn templates_window(&mut self, ctx: &egui::Context) -> Option<PanelAction> {
+        if !self.templates_open {
+            return None;
+        }
+        // Provider catalogue for the dropdown + argv lookup (fresh, cheap).
+        let providers: Vec<(String, String, Vec<String>)> = all_providers()
+            .iter()
+            .map(|p| {
+                (
+                    p.id().to_string(),
+                    p.display_name().to_string(),
+                    p.new_session_argv(),
+                )
+            })
+            .collect();
+
+        let mut open = true;
+        let mut to_launch: Option<String> = None;
+        let mut to_delete: Option<String> = None;
+        let mut save_form = false;
+        let mut cancel_form = false;
+
+        egui::Window::new("📋 Plantillas de sesión")
+            .open(&mut open)
+            .resizable(true)
+            .default_size([420.0, 360.0])
+            .show(ctx, |ui| {
+                if self.templates.templates.is_empty() {
+                    ui.weak("Sin plantillas todavía. Crea una abajo.");
+                }
+                for t in &self.templates.templates {
+                    ui.horizontal(|ui| {
+                        if ui.button("▶").on_hover_text("Lanzar").clicked() {
+                            to_launch = Some(t.id.clone());
+                        }
+                        if ui.small_button("✕").on_hover_text("Eliminar").clicked() {
+                            to_delete = Some(t.id.clone());
+                        }
+                        ui.label(egui::RichText::new(&t.name).strong());
+                        ui.weak(format!("[{}]", t.provider));
+                        for tag in &t.tags {
+                            ui.colored_label(c_teal(), format!("#{tag}"));
+                        }
+                    });
+                }
+                ui.separator();
+                if self.template_form.is_none() {
+                    if ui.button("＋ Nueva plantilla").clicked() {
+                        let mut f = TemplateForm::default();
+                        // Default the provider to the first available one.
+                        if let Some((id, _, _)) = providers.first() {
+                            f.provider = id.clone();
+                        }
+                        self.template_form = Some(f);
+                    }
+                } else if let Some(f) = self.template_form.as_mut() {
+                    egui::Grid::new("tpl-form").num_columns(2).show(ui, |ui| {
+                        ui.label("Nombre");
+                        ui.text_edit_singleline(&mut f.name);
+                        ui.end_row();
+                        ui.label("Proveedor");
+                        egui::ComboBox::from_id_salt("tpl-provider")
+                            .selected_text(
+                                providers
+                                    .iter()
+                                    .find(|(id, _, _)| id == &f.provider)
+                                    .map(|(_, dn, _)| dn.as_str())
+                                    .unwrap_or("—"),
+                            )
+                            .show_ui(ui, |ui| {
+                                for (id, dn, _) in &providers {
+                                    ui.selectable_value(&mut f.provider, id.clone(), dn);
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("Prompt");
+                        ui.add(
+                            egui::TextEdit::multiline(&mut f.prompt)
+                                .desired_rows(2)
+                                .desired_width(240.0)
+                                .hint_text("Opcional: se pega al lanzar"),
+                        );
+                        ui.end_row();
+                        ui.label("Directorio");
+                        ui.text_edit_singleline(&mut f.cwd);
+                        ui.end_row();
+                        ui.label("Tags");
+                        ui.text_edit_singleline(&mut f.tags);
+                        ui.end_row();
+                    });
+                    ui.horizontal(|ui| {
+                        let ok = !f.name.trim().is_empty() && !f.provider.trim().is_empty();
+                        if ui.add_enabled(ok, egui::Button::new("Guardar")).clicked() {
+                            save_form = true;
+                        }
+                        if ui.button("Cancelar").clicked() {
+                            cancel_form = true;
+                        }
+                    });
+                }
+            });
+
+        if cancel_form {
+            self.template_form = None;
+        }
+        if save_form {
+            if let Some(f) = self.template_form.take() {
+                let prompt = f.prompt.trim().to_string();
+                let cwd = f.cwd.trim().to_string();
+                let t = crate::templates::LaunchTemplate {
+                    id: crate::templates::slug(&f.name, now_secs()),
+                    name: f.name.trim().to_string(),
+                    provider: f.provider.clone(),
+                    prompt: (!prompt.is_empty()).then_some(prompt),
+                    cwd: (!cwd.is_empty()).then_some(cwd),
+                    tags: parse_tags(&f.tags),
+                };
+                match self.templates.upsert(t) {
+                    Ok(()) => self.status = Some("Plantilla guardada".into()),
+                    Err(e) => self.status = Some(format!("No se pudo guardar: {e}")),
+                }
+            }
+        }
+        if let Some(id) = to_delete {
+            if let Err(e) = self.templates.delete(&id) {
+                self.status = Some(format!("No se pudo borrar: {e}"));
+            }
+        }
+        let mut action = None;
+        if let Some(id) = to_launch {
+            if let Some(t) = self.templates.templates.iter().find(|t| t.id == id) {
+                let argv = providers
+                    .iter()
+                    .find(|(pid, _, _)| pid == &t.provider)
+                    .map(|(_, _, argv)| argv.clone())
+                    .unwrap_or_default();
+                if argv.is_empty() {
+                    self.status = Some(format!("Proveedor «{}» no disponible", t.provider));
+                } else {
+                    action = Some(PanelAction::OpenTemplate {
+                        argv,
+                        cwd: t.cwd.as_ref().map(PathBuf::from),
+                        prompt: t.prompt.clone(),
+                    });
+                }
+            }
+        }
+        if !open {
+            self.templates_open = false;
+            self.template_form = None;
+        }
+        action
     }
 
     fn project_window(&mut self, ctx: &egui::Context) {
