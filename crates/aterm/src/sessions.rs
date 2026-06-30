@@ -471,14 +471,27 @@ impl SessionPanel {
             }
         });
 
-        ui.horizontal(|ui| {
-            ui.label("Buscar:");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text("filtrar…")
-                    .desired_width(f32::INFINITY),
-            );
-        });
+        // Search as a rounded pill with a leading icon (frameless inner edit).
+        let spal = crate::theme::pal();
+        egui::Frame::none()
+            .fill(spal.surface0)
+            .rounding(crate::theme::RADIUS)
+            .stroke(egui::Stroke::new(1.0, spal.surface1))
+            .inner_margin(egui::Margin::symmetric(9.0, 5.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("🔍").color(spal.overlay));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter)
+                            .hint_text("filtrar sesiones…")
+                            .frame(false)
+                            .desired_width(f32::INFINITY),
+                    );
+                    if !self.filter.is_empty() && ui.small_button("✕").clicked() {
+                        self.filter.clear();
+                    }
+                });
+            });
         ui.horizontal(|ui| {
             let searching = self.fts_rx.is_some();
             if ui
@@ -505,17 +518,27 @@ impl SessionPanel {
             }
         });
 
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Agrupar:");
-            ui.selectable_value(&mut self.group_mode, GroupMode::Provider, "Proveedor");
-            ui.selectable_value(&mut self.group_mode, GroupMode::Project, "Proyecto");
-            ui.selectable_value(
-                &mut self.group_mode,
-                GroupMode::Cascade,
-                "Proveedor › Proyecto",
-            );
-            ui.selectable_value(&mut self.group_mode, GroupMode::Group, "Grupos");
-        });
+        // Group mode as a connected segmented control.
+        egui::Frame::none()
+            .fill(spal.surface0)
+            .rounding(crate::theme::RADIUS)
+            .inner_margin(egui::Margin::same(2.0))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.visuals_mut().selection.bg_fill = spal.blue.gamma_multiply(0.30);
+                ui.visuals_mut().selection.stroke = egui::Stroke::NONE;
+                ui.visuals_mut().widgets.hovered.weak_bg_fill = spal.surface1;
+                ui.horizontal(|ui| {
+                    for (mode, label) in [
+                        (GroupMode::Provider, "Proveedor"),
+                        (GroupMode::Project, "Proyecto"),
+                        (GroupMode::Cascade, "Prov › Proy"),
+                        (GroupMode::Group, "Grupos"),
+                    ] {
+                        ui.selectable_value(&mut self.group_mode, mode, label);
+                    }
+                });
+            });
 
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.only_active, "● Solo activas");
