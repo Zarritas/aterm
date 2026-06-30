@@ -6,6 +6,19 @@ use std::sync::{LazyLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+/// How chatty the transient toasts are.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotifyLevel {
+    /// Show every toast.
+    #[default]
+    All,
+    /// Only show error-like messages.
+    Errors,
+    /// Suppress all toasts.
+    None,
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -27,6 +40,8 @@ pub struct Settings {
     pub refresh_secs: u64,
     /// Whether to query provider service status + account quota (network).
     pub fetch_status: bool,
+    /// How chatty the transient toasts are.
+    pub notify_level: NotifyLevel,
 }
 
 impl Default for Settings {
@@ -43,6 +58,7 @@ impl Default for Settings {
             shell_dir: String::new(),
             refresh_secs: 120,
             fetch_status: true,
+            notify_level: NotifyLevel::All,
         }
     }
 }

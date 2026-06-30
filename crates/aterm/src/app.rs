@@ -316,7 +316,25 @@ impl aterm_pro_api::ProHost for AtermApp {
     }
 
     fn notify(&mut self, message: String) {
-        self.toast = Some((message, std::time::Instant::now()));
+        use crate::settings::NotifyLevel;
+        let is_err = [
+            "falló",
+            "error",
+            "no se pudo",
+            "no se pudieron",
+            "✖",
+            "inválid",
+        ]
+        .iter()
+        .any(|m| message.contains(m));
+        let show = match crate::settings::get().notify_level {
+            NotifyLevel::All => true,
+            NotifyLevel::Errors => is_err,
+            NotifyLevel::None => false,
+        };
+        if show {
+            self.toast = Some((message, std::time::Instant::now()));
+        }
     }
 
     fn show_report(&mut self, title: String, markdown: String) {
@@ -1428,6 +1446,34 @@ impl AtermApp {
                                         egui::Slider::new(&mut s.refresh_secs, 15..=600)
                                             .suffix(" s"),
                                     );
+                                });
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    use crate::settings::NotifyLevel;
+                                    label_w(ui, "Notificaciones");
+                                    egui::ComboBox::from_id_salt("notify-level")
+                                        .selected_text(match s.notify_level {
+                                            NotifyLevel::All => "Todas",
+                                            NotifyLevel::Errors => "Solo errores",
+                                            NotifyLevel::None => "Ninguna",
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut s.notify_level,
+                                                NotifyLevel::All,
+                                                "Todas",
+                                            );
+                                            ui.selectable_value(
+                                                &mut s.notify_level,
+                                                NotifyLevel::Errors,
+                                                "Solo errores",
+                                            );
+                                            ui.selectable_value(
+                                                &mut s.notify_level,
+                                                NotifyLevel::None,
+                                                "Ninguna",
+                                            );
+                                        });
                                 });
                             }
                         }
