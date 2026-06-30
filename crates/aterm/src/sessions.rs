@@ -2116,7 +2116,9 @@ fn row_ui(
     provider_id: &str,
     gi: usize,
     si: usize,
-    show_provider: bool,
+    // Provider identity is now shown via the avatar in every view; kept for the
+    // stable call signature across the four group modes.
+    _show_provider: bool,
     action: &mut Option<PanelAction>,
     to_edit: &mut Option<(String, String)>,
     to_preview: &mut Option<(String, String, String)>,
@@ -2153,7 +2155,7 @@ fn row_ui(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
 
-            // Title line: (checkbox in select mode), live dot, resume, name.
+            // Title line: [checkbox] avatar ▶ icon name … (right) ★ · live · time.
             ui.horizontal(|ui| {
                 if select_mode {
                     let mut checked = selected.contains(&format!("{provider_id}:{}", s.id));
@@ -2161,6 +2163,7 @@ fn row_ui(
                         *to_toggle_sel = Some(format!("{provider_id}:{}", s.id));
                     }
                 }
+                provider_avatar(ui, provider_id, 22.0);
                 if ui
                     .add_enabled(!s.resume_argv.is_empty(), egui::Button::new("▶"))
                     .on_hover_text("Reanudar")
@@ -2172,31 +2175,31 @@ fn row_ui(
                         key: Some(format!("{provider_id}:{}", s.id)),
                     });
                 }
+                if let Some(icon) = crate::icons::session(&format!("{provider_id}:{}", s.id)) {
+                    ui.label(icon);
+                }
                 if let Some(dot) = meta
                     .and_then(|m| m.color.as_ref())
                     .and_then(|c| parse_hex(c))
                 {
                     ui.colored_label(dot, "●");
                 }
-                if s.is_active {
-                    let (color, tip) = live_state(s.live_status.as_deref());
-                    ui.colored_label(color, "●").on_hover_text(tip);
-                }
-                if show_provider {
-                    let pc = provider_color(provider_id);
-                    crate::theme::pill(ui, provider_id, pc.gamma_multiply(0.22), pc);
-                }
-                if meta.is_some_and(|m| m.favorite) {
-                    ui.colored_label(crate::theme::pal().yellow, "★")
-                        .on_hover_text("Favorito");
-                }
-                if let Some(icon) = crate::icons::session(&format!("{provider_id}:{}", s.id)) {
-                    ui.label(icon);
-                }
                 ui.label(egui::RichText::new(&name).strong().size(14.5));
+                // Right cluster: time, favourite star, live dot.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak(relative_time(s.last_activity));
+                    if meta.is_some_and(|m| m.favorite) {
+                        ui.colored_label(crate::theme::pal().yellow, "★")
+                            .on_hover_text("Favorito");
+                    }
+                    if s.is_active {
+                        let (color, tip) = live_state(s.live_status.as_deref());
+                        ui.colored_label(color, "●").on_hover_text(tip);
+                    }
+                });
             });
 
-            // Metadata line: model · branch · context% · msgs · relative time.
+            // Metadata line: model · branch · context% · msgs.
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let mut sep = false;
@@ -2226,8 +2229,6 @@ fn row_ui(
                     dot(ui, &mut sep);
                     ui.weak(format!("{n} msg"));
                 }
-                dot(ui, &mut sep);
-                ui.weak(relative_time(s.last_activity));
             });
 
             if let Some(m) = meta {
@@ -2488,6 +2489,37 @@ fn provider_color(id: &str) -> egui::Color32 {
         "factory" => p.red,
         _ => p.lavender,
     }
+}
+
+/// A small rounded "avatar" for a provider: a tinted square with its initial,
+/// giving each session card a strong, scannable identity (Warp-style).
+fn provider_avatar(ui: &mut egui::Ui, id: &str, size: f32) {
+    let c = provider_color(id);
+    let letter = id
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .next()
+        .unwrap_or('?');
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    ui.painter().rect_filled(
+        rect,
+        egui::Rounding::same(size * 0.28),
+        c.gamma_multiply(0.22),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        egui::Rounding::same(size * 0.28),
+        egui::Stroke::new(1.0, c.gamma_multiply(0.55)),
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        letter,
+        egui::FontId::proportional(size * 0.6),
+        c,
+    );
 }
 
 /// The project bucket key for a session: its `cwd`, or a placeholder.
