@@ -1051,6 +1051,9 @@ impl SessionPanel {
     }
 
     fn editor_window(&mut self, ctx: &egui::Context) {
+        // Tag catalogue (all tags in use) for the markable picker — read before
+        // taking `&mut self.edit`.
+        let known_tags = self.metadata.all_tags();
         let Some(edit) = self.edit.as_mut() else {
             return;
         };
@@ -1068,6 +1071,25 @@ impl SessionPanel {
                     ui.label("Tags");
                     ui.text_edit_singleline(&mut edit.tags);
                     ui.end_row();
+                    // Markable catalogue: toggle a known tag in/out of the field.
+                    if !known_tags.is_empty() {
+                        ui.label("");
+                        ui.horizontal_wrapped(|ui| {
+                            let mut current = parse_tags(&edit.tags);
+                            for t in &known_tags {
+                                let present = current.iter().any(|x| x == t);
+                                if ui.selectable_label(present, format!("#{t}")).clicked() {
+                                    if present {
+                                        current.retain(|x| x != t);
+                                    } else {
+                                        current.push(t.clone());
+                                    }
+                                    edit.tags = current.join(", ");
+                                }
+                            }
+                        });
+                        ui.end_row();
+                    }
                     ui.label("Color");
                     ui.text_edit_singleline(&mut edit.color);
                     ui.end_row();
