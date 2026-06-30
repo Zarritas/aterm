@@ -2128,20 +2128,23 @@ fn row_ui(
         .or_else(|| s.title.clone())
         .unwrap_or_else(|| "(sin título)".to_string());
 
-    // Accent border: green when live, yellow when favourited, none otherwise.
     let pal = crate::theme::pal();
-    let stroke = if s.is_active {
-        egui::Stroke::new(1.0, pal.green)
-    } else if meta.is_some_and(|m| m.favorite) {
+    // Left accent stripe by provider; subtle border for favourites.
+    let accent = provider_color(provider_id);
+    let stroke = if meta.is_some_and(|m| m.favorite) {
         egui::Stroke::new(1.0, pal.yellow)
     } else {
         egui::Stroke::NONE
     };
-    egui::Frame::none()
+    let card = egui::Frame::none()
         .fill(c_card())
         .stroke(stroke)
-        .rounding(8.0)
-        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+        .rounding(crate::theme::RADIUS)
+        .outer_margin(egui::Margin {
+            left: 4.0,
+            ..egui::Margin::symmetric(0.0, 2.0)
+        })
+        .inner_margin(egui::Margin::symmetric(12.0, 9.0))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
 
@@ -2184,7 +2187,7 @@ fn row_ui(
                 if let Some(icon) = crate::icons::session(&format!("{provider_id}:{}", s.id)) {
                     ui.label(icon);
                 }
-                ui.label(egui::RichText::new(&name).strong());
+                ui.label(egui::RichText::new(&name).strong().size(14.5));
             });
 
             // Metadata line: model · branch · context% · msgs · relative time.
@@ -2276,7 +2279,24 @@ fn row_ui(
                 }
             });
         });
-    ui.add_space(6.0);
+
+    // Provider accent stripe down the left edge (always visible) + a soft
+    // outline on hover, so cards read as distinct, tappable objects.
+    let r = card.response.rect;
+    let strip = egui::Rect::from_min_max(
+        egui::pos2(r.left() - 4.0, r.top() + 1.0),
+        egui::pos2(r.left() - 1.0, r.bottom() - 1.0),
+    );
+    ui.painter()
+        .rect_filled(strip, egui::Rounding::same(2.0), accent);
+    if ui.rect_contains_pointer(r) {
+        ui.painter().rect_stroke(
+            r,
+            crate::theme::RADIUS,
+            egui::Stroke::new(1.0, pal.lavender.gamma_multiply(0.7)),
+        );
+    }
+    ui.add_space(4.0);
 }
 
 /// Scan the enabled providers (list sessions + quota). Runs off the UI thread.
