@@ -196,6 +196,9 @@ pub struct SessionPanel {
     backup_path: String,
     /// Draft emoji for the project being edited in the project window.
     project_icon_draft: String,
+    /// Project path whose commands window is open, plus its discovered commands.
+    commands_for: Option<String>,
+    commands: Vec<crate::commands::ProjectCommand>,
 }
 
 /// Draft fields for the "save a launch template" form.
@@ -245,6 +248,8 @@ impl Default for SessionPanel {
             template_form: None,
             backup_path: String::new(),
             project_icon_draft: String::new(),
+            commands_for: None,
+            commands: Vec::new(),
         }
     }
 }
@@ -645,6 +650,7 @@ impl SessionPanel {
         let mut to_move: Option<(String, String, bool)> = None;
         let mut to_compact: Option<(usize, usize)> = None;
         let mut to_rename_project: Option<String> = None;
+        let mut to_open_commands: Option<String> = None;
         // Take the new-session path draft out of `self` so the scroll closure
         // can mutate it without clashing with the immutable `self` borrows
         // below; written back after the closure.
@@ -769,7 +775,12 @@ impl SessionPanel {
                             count_states(items.iter().map(|(gi, si)| &groups[*gi].sessions[*si]));
                         let title = project_header(projects, project, items.len());
                         section(ui, ("project", bi), title, counts, force_open, true, |ui| {
-                            project_rename_row(ui, project, &mut to_rename_project);
+                            project_rename_row(
+                                ui,
+                                project,
+                                &mut to_rename_project,
+                                &mut to_open_commands,
+                            );
                             let proj = (project.as_str() != NO_PROJECT).then_some(project.as_str());
                             new_session_pick_provider(ui, groups, proj, &mut action);
                             for (gi, si) in items {
@@ -855,7 +866,12 @@ impl SessionPanel {
                                         force_open,
                                         true,
                                         |ui| {
-                                            project_rename_row(ui, project, &mut to_rename_project);
+                                            project_rename_row(
+                                                ui,
+                                                project,
+                                                &mut to_rename_project,
+                                                &mut to_open_commands,
+                                            );
                                             // Provider and project both fixed here: open directly.
                                             if ui.button("+ Nueva sesión").clicked() {
                                                 let argv = group.provider.new_session_argv();
@@ -936,6 +952,10 @@ impl SessionPanel {
             self.project_icon_draft = crate::icons::project(&path).unwrap_or_default();
             self.project_edit = Some((path, draft));
         }
+        if let Some(path) = to_open_commands {
+            self.commands = crate::commands::discover(std::path::Path::new(&path));
+            self.commands_for = Some(path);
+        }
         self.new_session_path = new_session_path;
         self.force_open = None; // one-shot: applied this frame, then released
 
@@ -944,6 +964,9 @@ impl SessionPanel {
         self.move_window(ui.ctx());
         self.preview_window(ui.ctx());
         if let Some(a) = self.templates_window(ui.ctx()) {
+            action = Some(a);
+        }
+        if let Some(a) = self.commands_window(ui.ctx()) {
             action = Some(a);
         }
 
@@ -1303,6 +1326,78 @@ impl SessionPanel {
         if !open {
             self.templates_open = false;
             self.template_form = None;
+        }
+        action
+    }
+
+    /// The project-commands picker: scripts + slash-commands for one project.
+    /// Returns a launch action when the user fires a command.
+    fn commands_window(&mut self, ctx: &egui::Context) -> Option<PanelAction> {
+        let path = self.commands_for.clone()?;
+        let mut open = true;
+        let mut to_run: Option<crate::commands::RunSpec> = None;
+        egui::Window::new(format!("⚙ Comandos — {}", display_path(&path)))
+            .open(&mut open)
+            .resizable(true)
+            .default_size([460.0, 360.0])
+            .show(ctx, |ui| {
+                if self.commands.is_empty() {
+                    ui.weak(
+                        "Sin comandos (slash-commands, package.json, Makefile, justfile, Cargo).",
+                    );
+                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for c in &self.commands {
+                        ui.horizontal(|ui| {
+                            if ui.button("▶").on_hover_text("Lanzar").clicked() {
+                                to_run = Some(c.run.clone());
+                            }
+                            ui.label(egui::RichText::new(&c.label).strong());
+                            ui.weak(&c.detail);
+                        });
+                    }
+                });
+            });
+
+        let mut action = None;
+        if let Some(run) = to_run {
+            let cwd = Some(PathBuf::from(&path));
+            match run {
+                crate::commands::RunSpec::Shell(cmd) => {
+                    action = Some(PanelAction::Open {
+                        argv: vec![
+                            "sh".to_string(),
+                            "-lc".to_string(),
+                            format!("{cmd}; exec ${{SHELL:-sh}}"),
+                        ],
+                        cwd,
+                        key: None,
+                    });
+                }
+                crate::commands::RunSpec::Slash(slash) => {
+                    let argv = all_providers()
+                        .iter()
+                        .find(|p| p.id() == "claude")
+                        .map(|p| p.new_session_argv())
+                        .filter(|a| !a.is_empty());
+                    match argv {
+                        Some(argv) => {
+                            action = Some(PanelAction::OpenTemplate {
+                                argv,
+                                cwd,
+                                prompt: Some(slash),
+                            });
+                        }
+                        None => {
+                            self.status =
+                                Some("Claude no disponible para slash-commands".to_string())
+                        }
+                    }
+                }
+            }
+            self.commands_for = None;
+        } else if !open {
+            self.commands_for = None;
         }
         action
     }
@@ -2057,7 +2152,12 @@ fn new_session_pick_project(
 
 /// First row inside a project bucket: a rename button plus the real path, so
 /// the user always sees what an alias maps to. Hidden for the no-cwd bucket.
-fn project_rename_row(ui: &mut egui::Ui, path: &str, out: &mut Option<String>) {
+fn project_rename_row(
+    ui: &mut egui::Ui,
+    path: &str,
+    out: &mut Option<String>,
+    open_commands: &mut Option<String>,
+) {
     if path == NO_PROJECT {
         return;
     }
@@ -2068,6 +2168,13 @@ fn project_rename_row(ui: &mut egui::Ui, path: &str, out: &mut Option<String>) {
             .clicked()
         {
             *out = Some(path.to_string());
+        }
+        if ui
+            .small_button("⚙")
+            .on_hover_text("Comandos del proyecto (scripts + slash-commands)")
+            .clicked()
+        {
+            *open_commands = Some(path.to_string());
         }
         ui.weak(display_path(path));
     });
