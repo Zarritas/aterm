@@ -102,6 +102,8 @@ pub enum PanelAction {
         cwd: Option<PathBuf>,
         prompt: Option<String>,
     },
+    /// Open several tabs at once (multiselection "open N", new-session-multi).
+    OpenMany(Vec<(Vec<String>, Option<PathBuf>, Option<String>)>),
 }
 
 /// One provider's scan result plus the live trait object (for preview/delete/
@@ -205,6 +207,13 @@ pub struct SessionPanel {
     groups_store: crate::groups::GroupStore,
     /// Draft name for the "new group" field in the group view.
     new_group_name: String,
+    /// Multiselection mode: rows show a checkbox and a batch action bar appears.
+    select_mode: bool,
+    /// Selected session keys (`provider:id`) in multiselection mode.
+    selected: std::collections::HashSet<String>,
+    /// Whether the "delete by date" dialog is open, and its day-cutoff draft.
+    delete_by_date_open: bool,
+    delete_days: String,
 }
 
 /// Draft fields for the "save a launch template" form.
@@ -258,6 +267,10 @@ impl Default for SessionPanel {
             commands: Vec::new(),
             groups_store: crate::groups::GroupStore::load(),
             new_group_name: String::new(),
+            select_mode: false,
+            selected: std::collections::HashSet::new(),
+            delete_by_date_open: false,
+            delete_days: "30".to_string(),
         }
     }
 }
@@ -480,7 +493,47 @@ impl SessionPanel {
             {
                 self.templates_open = true;
             }
+            if ui
+                .selectable_label(self.select_mode, "☑ Selección")
+                .on_hover_text("Selección múltiple para abrir/eliminar en lote")
+                .clicked()
+            {
+                self.select_mode = !self.select_mode;
+                if !self.select_mode {
+                    self.selected.clear();
+                }
+            }
         });
+
+        // Batch-action bar (multiselection) + delete-by-date entry point.
+        if self.select_mode {
+            ui.horizontal_wrapped(|ui| {
+                let n = self.selected.len();
+                ui.label(format!("{n} seleccionadas"));
+                if ui.add_enabled(n > 0, egui::Button::new("Abrir")).clicked() {
+                    if let Some(a) = self.selected_open_action() {
+                        action = Some(a);
+                    }
+                }
+                if ui
+                    .add_enabled(n > 0, egui::Button::new("Eliminar"))
+                    .clicked()
+                {
+                    let keys: Vec<String> = self.selected.iter().cloned().collect();
+                    self.delete_keys(&keys);
+                    self.selected.clear();
+                }
+                if ui.button("Por fecha…").clicked() {
+                    self.delete_by_date_open = true;
+                }
+                if ui
+                    .add_enabled(n > 0, egui::Button::new("Limpiar"))
+                    .clicked()
+                {
+                    self.selected.clear();
+                }
+            });
+        }
 
         // Tag "folders": a row of chips that filter to one tag at a time.
         let tags = self.metadata.all_tags();
@@ -673,6 +726,9 @@ impl SessionPanel {
         let mut new_session_path = std::mem::take(&mut self.new_session_path);
         let mut new_group_draft = std::mem::take(&mut self.new_group_name);
         let group_store = &self.groups_store;
+        let select_mode = self.select_mode;
+        let selected = &self.selected;
+        let mut to_toggle_sel: Option<String> = None;
 
         // When a content search is active, text matching uses its result set
         // (transcript hits) instead of the title/metadata filter.
@@ -767,6 +823,9 @@ impl SessionPanel {
                                         &mut to_delete,
                                         &mut to_move,
                                         &mut to_compact,
+                                        select_mode,
+                                        selected,
+                                        &mut to_toggle_sel,
                                     );
                                 }
                             },
@@ -819,6 +878,9 @@ impl SessionPanel {
                                     &mut to_delete,
                                     &mut to_move,
                                     &mut to_compact,
+                                    select_mode,
+                                    selected,
+                                    &mut to_toggle_sel,
                                 );
                             }
                         });
@@ -920,6 +982,9 @@ impl SessionPanel {
                                                     &mut to_delete,
                                                     &mut to_move,
                                                     &mut to_compact,
+                                                    select_mode,
+                                                    selected,
+                                                    &mut to_toggle_sel,
                                                 );
                                             }
                                         },
@@ -997,6 +1062,9 @@ impl SessionPanel {
                                     &mut to_delete,
                                     &mut to_move,
                                     &mut to_compact,
+                                    select_mode,
+                                    selected,
+                                    &mut to_toggle_sel,
                                 );
                             }
                         });
@@ -1054,6 +1122,11 @@ impl SessionPanel {
         if let Some(id) = to_delete_group {
             self.groups_store.delete(&id);
         }
+        if let Some(key) = to_toggle_sel {
+            if !self.selected.remove(&key) {
+                self.selected.insert(key);
+            }
+        }
         self.new_group_name = new_group_draft;
         self.new_session_path = new_session_path;
         self.force_open = None; // one-shot: applied this frame, then released
@@ -1068,6 +1141,7 @@ impl SessionPanel {
         if let Some(a) = self.commands_window(ui.ctx()) {
             action = Some(a);
         }
+        self.delete_by_date_window(ui.ctx());
 
         action
     }
@@ -1175,6 +1249,115 @@ impl SessionPanel {
                     Some("Sesión activa: vuelve a pulsar ✖ para forzar el borrado".into());
             }
             Err(e) => self.status = Some(e.to_user_string()),
+        }
+    }
+
+    /// Build an `OpenMany` action that resumes every selected session that has
+    /// a resume argv. Returns `None` if nothing resumable is selected.
+    fn selected_open_action(&self) -> Option<PanelAction> {
+        let mut opens = Vec::new();
+        for g in &self.groups {
+            let pid = g.provider.id();
+            for s in &g.sessions {
+                let key = format!("{pid}:{}", s.id);
+                if self.selected.contains(&key) && !s.resume_argv.is_empty() {
+                    opens.push((
+                        s.resume_argv.clone(),
+                        s.cwd.as_ref().map(PathBuf::from),
+                        Some(key),
+                    ));
+                }
+            }
+        }
+        (!opens.is_empty()).then_some(PanelAction::OpenMany(opens))
+    }
+
+    /// Delete every session named by `keys` (`provider:id`), forcing past the
+    /// "active" guard (batch ops are explicit). Re-resolves indices each time
+    /// since deletion shifts them.
+    fn delete_keys(&mut self, keys: &[String]) {
+        let mut deleted = 0usize;
+        for key in keys {
+            let Some((provider_id, id)) = key.split_once(':') else {
+                continue;
+            };
+            let found = self.groups.iter().enumerate().find_map(|(gi, g)| {
+                (g.provider.id() == provider_id)
+                    .then(|| {
+                        g.sessions
+                            .iter()
+                            .position(|s| s.id == id)
+                            .map(|si| (gi, si))
+                    })
+                    .flatten()
+            });
+            if let Some((gi, si)) = found {
+                if self.groups[gi].provider.delete_session(id, true).is_ok() {
+                    self.metadata
+                        .update(provider_id, id, |m| *m = Default::default());
+                    self.groups[gi].sessions.remove(si);
+                    deleted += 1;
+                }
+            }
+        }
+        self.save_metadata();
+        self.status = Some(format!("Eliminadas {deleted} sesión(es)"));
+    }
+
+    /// The "delete by date" dialog: removes sessions older than N days.
+    fn delete_by_date_window(&mut self, ctx: &egui::Context) {
+        if !self.delete_by_date_open {
+            return;
+        }
+        let mut open = true;
+        let mut confirm = false;
+        let mut cancel = false;
+        egui::Window::new("Eliminar por fecha")
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label("Eliminar sesiones sin actividad desde hace más de:");
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut self.delete_days).desired_width(60.0));
+                    ui.label("días");
+                });
+                let days: Option<u64> = self.delete_days.trim().parse().ok();
+                if days.is_none() {
+                    ui.colored_label(egui::Color32::from_rgb(0xf3, 0x8b, 0xa8), "Número inválido");
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(days.is_some(), egui::Button::new("Eliminar"))
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                    if ui.button("Cancelar").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if confirm {
+            if let Ok(days) = self.delete_days.trim().parse::<u64>() {
+                let cutoff = now_secs() as f64 - (days * 86_400) as f64;
+                let keys: Vec<String> = self
+                    .groups
+                    .iter()
+                    .flat_map(|g| {
+                        let pid = g.provider.id();
+                        g.sessions
+                            .iter()
+                            .filter(|s| s.last_activity < cutoff)
+                            .map(move |s| format!("{pid}:{}", s.id))
+                    })
+                    .collect();
+                self.delete_keys(&keys);
+            }
+            self.delete_by_date_open = false;
+        } else if cancel || !open {
+            self.delete_by_date_open = false;
         }
     }
 
@@ -1755,6 +1938,9 @@ fn row_ui(
     to_delete: &mut Option<(usize, usize, bool)>,
     to_move: &mut Option<(String, String, bool)>,
     to_compact: &mut Option<(usize, usize)>,
+    select_mode: bool,
+    selected: &std::collections::HashSet<String>,
+    to_toggle_sel: &mut Option<String>,
 ) {
     let name = meta
         .and_then(|m| m.name.clone())
@@ -1768,8 +1954,14 @@ fn row_ui(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
 
-            // Title line: live dot, resume, optional [provider], name.
+            // Title line: (checkbox in select mode), live dot, resume, name.
             ui.horizontal(|ui| {
+                if select_mode {
+                    let mut checked = selected.contains(&format!("{provider_id}:{}", s.id));
+                    if ui.checkbox(&mut checked, "").clicked() {
+                        *to_toggle_sel = Some(format!("{provider_id}:{}", s.id));
+                    }
+                }
                 if ui
                     .add_enabled(!s.resume_argv.is_empty(), egui::Button::new("▶"))
                     .on_hover_text("Reanudar")

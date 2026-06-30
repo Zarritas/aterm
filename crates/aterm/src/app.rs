@@ -737,6 +737,12 @@ impl eframe::App for AtermApp {
             Option<std::path::PathBuf>,
             Option<String>,
         )> = None;
+        #[allow(clippy::type_complexity)]
+        let mut pending_many: Vec<(
+            Vec<String>,
+            Option<std::path::PathBuf>,
+            Option<String>,
+        )> = Vec::new();
 
         // Stash this frame's context so `ProHost::open_agent` (no ctx arg) can
         // spawn terminals, then fire any prompt injections whose timer elapsed.
@@ -1045,10 +1051,16 @@ impl eframe::App for AtermApp {
                 Some(PanelAction::OpenTemplate { argv, cwd, prompt }) => {
                     pending_template = Some((argv, cwd, prompt));
                 }
+                Some(PanelAction::OpenMany(opens)) => {
+                    pending_many = opens;
+                }
                 None => {}
             });
 
         if let Some((argv, cwd, key)) = pending_open {
+            self.open_tab(ctx, argv, cwd, key);
+        }
+        for (argv, cwd, key) in pending_many {
             self.open_tab(ctx, argv, cwd, key);
         }
         if let Some((argv, cwd, prompt)) = pending_template {
