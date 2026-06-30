@@ -28,6 +28,38 @@ pub struct ProviderLite {
     pub new_session_argv: Vec<String>,
 }
 
+/// A session, flattened for the Pro surface (dashboard, profiles, port).
+#[derive(Clone, Debug)]
+pub struct SessionLite {
+    pub provider: String,
+    pub id: String,
+    pub title: Option<String>,
+    pub cwd: Option<String>,
+    pub model: Option<String>,
+    /// Unix epoch seconds of last activity.
+    pub last_activity: f64,
+    pub message_count: Option<u64>,
+    /// argv to resume this session (empty if not resumable).
+    pub resume_argv: Vec<String>,
+}
+
+/// A live terminal tab, flattened so a workspace profile can be snapshotted and
+/// reopened.
+#[derive(Clone, Debug)]
+pub struct TabSnapshot {
+    pub argv: Vec<String>,
+    pub cwd: Option<String>,
+    pub key: Option<String>,
+    pub name: Option<String>,
+}
+
+/// One conversation turn (role + text), for export/port.
+#[derive(Clone, Debug)]
+pub struct Turn {
+    pub role: String,
+    pub text: String,
+}
+
 /// Services the core lends to Pro features. The core (`AtermApp`) implements
 /// this; Pro code only ever sees this surface.
 pub trait ProHost {
@@ -61,6 +93,26 @@ pub trait ProHost {
 
     /// Open the purchase page in the browser (upsell).
     fn open_buy(&self);
+
+    // ── Surface added for Fase 4 Pro features ────────────────────────────
+
+    /// Every known session (across providers), newest first.
+    fn sessions(&self) -> Vec<SessionLite>;
+
+    /// Full conversation of a session as role/text turns, if available.
+    fn transcript(&self, provider: &str, id: &str) -> Option<Vec<Turn>>;
+
+    /// The currently open terminal tabs (for workspace-profile snapshots).
+    fn current_tabs(&self) -> Vec<TabSnapshot>;
+
+    /// `~/.config/aterm` — where Pro state files live.
+    fn config_dir(&self) -> PathBuf;
+
+    /// Write `content` to `path`, creating parent dirs. Returns an error string.
+    fn write_file(&self, path: &Path, content: &str) -> Result<(), String>;
+
+    /// Open a file or URL with the system handler (`xdg-open`/`open`).
+    fn open_path(&self, path: &str);
 }
 
 /// The gated Pro features. Implemented by `aterm-pro` (private) for the
@@ -74,6 +126,10 @@ pub trait ProModule {
 
     /// Open the "clean up worktrees" dialog.
     fn open_cleanup(&mut self, host: &mut dyn ProHost);
+
+    /// Open the Pro features hub (workspace profiles, dashboard, export HTML,
+    /// port, memory graph, MCP config).
+    fn open_features(&mut self, host: &mut dyn ProHost);
 
     /// Draw any open Pro dialogs/windows for this frame and run confirmed
     /// actions. Called once per frame from the app's `update`.

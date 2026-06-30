@@ -109,6 +109,7 @@ enum ProAction {
     Parallel,
     Compare,
     Cleanup,
+    Features,
     License,
 }
 
@@ -347,6 +348,57 @@ impl aterm_pro_api::ProHost for AtermApp {
 
     fn open_buy(&self) {
         crate::license::open_buy();
+    }
+
+    fn sessions(&self) -> Vec<aterm_pro_api::SessionLite> {
+        self.panel.sessions_lite()
+    }
+
+    fn transcript(&self, provider: &str, id: &str) -> Option<Vec<aterm_pro_api::Turn>> {
+        agent_sessions::all_providers()
+            .iter()
+            .find(|p| p.id() == provider)?
+            .preview(id)
+            .ok()
+            .map(|turns| {
+                turns
+                    .into_iter()
+                    .map(|t| aterm_pro_api::Turn {
+                        role: t.role,
+                        text: t.text,
+                    })
+                    .collect()
+            })
+    }
+
+    fn current_tabs(&self) -> Vec<aterm_pro_api::TabSnapshot> {
+        self.tabs
+            .iter()
+            .map(|t| aterm_pro_api::TabSnapshot {
+                argv: t.argv.clone(),
+                cwd: t.cwd.as_ref().map(|p| p.to_string_lossy().to_string()),
+                key: t.key.clone(),
+                name: t.name.clone(),
+            })
+            .collect()
+    }
+
+    fn config_dir(&self) -> std::path::PathBuf {
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        home.join(".config/aterm")
+    }
+
+    fn write_file(&self, path: &std::path::Path, content: &str) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(path, content).map_err(|e| e.to_string())
+    }
+
+    fn open_path(&self, path: &str) {
+        crate::license::open_url(path);
     }
 }
 
@@ -913,6 +965,11 @@ impl eframe::App for AtermApp {
                         pro_action = Some(ProAction::Cleanup);
                         ui.close_menu();
                     }
+                    ui.separator();
+                    if ui.button("✦ Funciones Pro…").clicked() {
+                        pro_action = Some(ProAction::Features);
+                        ui.close_menu();
+                    }
                 });
                 ui.separator();
                 let mut to_close = None;
@@ -1148,6 +1205,7 @@ impl eframe::App for AtermApp {
             Some(ProAction::Parallel) => pro.open_parallel(self),
             Some(ProAction::Compare) => pro.run_compare(self),
             Some(ProAction::Cleanup) => pro.open_cleanup(self),
+            Some(ProAction::Features) => pro.open_features(self),
             Some(ProAction::License) => self.license_open = true,
             None => {}
         }

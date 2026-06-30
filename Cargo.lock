@@ -448,6 +448,8 @@ version = "0.1.0"
 dependencies = [
  "aterm-pro-api",
  "egui",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

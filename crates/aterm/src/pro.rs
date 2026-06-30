@@ -27,6 +27,7 @@ impl ProModule for NoopPro {
     fn open_parallel(&mut self, _host: &mut dyn ProHost) {}
     fn run_compare(&mut self, _host: &mut dyn ProHost) {}
     fn open_cleanup(&mut self, _host: &mut dyn ProHost) {}
+    fn open_features(&mut self, _host: &mut dyn ProHost) {}
     fn ui(&mut self, _ctx: &egui::Context, _host: &mut dyn ProHost) {}
     fn edition(&self) -> &'static str {
         "Community"
@@ -61,6 +62,9 @@ impl ProModule for CommunityPro {
     }
     fn open_cleanup(&mut self, host: &mut dyn ProHost) {
         Self::decline(host, "Limpiar worktrees");
+    }
+    fn open_features(&mut self, host: &mut dyn ProHost) {
+        Self::decline(host, "Funciones Pro");
     }
     fn ui(&mut self, _ctx: &egui::Context, _host: &mut dyn ProHost) {}
     fn edition(&self) -> &'static str {

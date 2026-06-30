@@ -40,10 +40,47 @@ struct CleanupDialog {
     picks: Vec<(Worktree, bool)>,
 }
 
+/// A tab in a saved profile (serde mirror of `TabSnapshot`, which the
+/// dependency-light contract crate doesn't derive serde for).
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct ProfileTab {
+    argv: Vec<String>,
+    cwd: Option<String>,
+    key: Option<String>,
+    name: Option<String>,
+}
+
+/// A saved workspace profile: a named set of tabs to reopen.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct Profile {
+    name: String,
+    tabs: Vec<ProfileTab>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct ProfileStore {
+    profiles: Vec<Profile>,
+}
+
 #[derive(Default)]
 struct ProImpl {
     parallel: Option<ParallelDialog>,
     cleanup: Option<CleanupDialog>,
+    /// Pro features hub window.
+    hub_open: bool,
+    /// Workspace-profiles window + draft name for "save current as".
+    profiles_open: bool,
+    profile_name: String,
+    /// Dashboard window.
+    dashboard_open: bool,
+    /// Export-to-HTML session picker window.
+    export_open: bool,
+    /// Port-session window + chosen target provider id.
+    port_open: bool,
+    port_target: String,
+    /// One-shot flags set from the hub, run (with host) in `ui`.
+    run_memory: bool,
+    run_mcp: bool,
 }
 
 /// Timestamp compacto en base36 (paridad con `Date.now().toString(36)`).
@@ -230,9 +267,27 @@ impl ProModule for ProImpl {
         });
     }
 
+    fn open_features(&mut self, host: &mut dyn ProHost) {
+        if !Self::gate(host, "Funciones Pro") {
+            return;
+        }
+        self.hub_open = true;
+    }
+
     fn ui(&mut self, ctx: &egui::Context, host: &mut dyn ProHost) {
         self.draw_parallel(ctx, host);
         self.draw_cleanup(ctx, host);
+        self.draw_hub(ctx);
+        self.draw_profiles(ctx, host);
+        self.draw_dashboard(ctx, host);
+        self.draw_export(ctx, host);
+        self.draw_port(ctx, host);
+        if std::mem::take(&mut self.run_memory) {
+            self.run_memory_graph(host);
+        }
+        if std::mem::take(&mut self.run_mcp) {
+            self.run_mcp_config(host);
+        }
     }
 
     fn edition(&self) -> &'static str {
@@ -390,6 +445,462 @@ impl ProImpl {
         }
         host.notify(format!("Limpiados {removed} worktree(s)."));
     }
+
+    // ── Fase 4: Pro features hub ─────────────────────────────────────────
+
+    fn draw_hub(&mut self, ctx: &egui::Context) {
+        if !self.hub_open {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("✦ Funciones Pro")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                if ui.button("📁 Perfiles de espacio de trabajo").clicked() {
+                    self.profiles_open = true;
+                }
+                if ui.button("📊 Dashboard").clicked() {
+                    self.dashboard_open = true;
+                }
+                if ui.button("🖺 Exportar conversación a HTML").clicked() {
+                    self.export_open = true;
+                }
+                if ui.button("⇄ Portar sesión a otro proveedor").clicked() {
+                    self.port_open = true;
+                }
+                if ui.button("🕸 Memory graph (CLAUDE.md)").clicked() {
+                    self.run_memory = true;
+                }
+                if ui.button("🔌 Configurar MCP").clicked() {
+                    self.run_mcp = true;
+                }
+            });
+        self.hub_open = open;
+    }
+
+    fn profiles_path(host: &dyn ProHost) -> std::path::PathBuf {
+        host.config_dir().join("profiles.json")
+    }
+
+    fn load_profiles(host: &dyn ProHost) -> ProfileStore {
+        std::fs::read_to_string(Self::profiles_path(host))
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_profiles(host: &mut dyn ProHost, store: &ProfileStore) {
+        let json = serde_json::to_string_pretty(store).unwrap_or_default();
+        if let Err(e) = host.write_file(&Self::profiles_path(host), &json) {
+            host.notify(format!("No se pudo guardar perfiles: {e}"));
+        }
+    }
+
+    fn draw_profiles(&mut self, ctx: &egui::Context, host: &mut dyn ProHost) {
+        if !self.profiles_open {
+            return;
+        }
+        let mut store = Self::load_profiles(host);
+        let mut open = true;
+        let mut to_open: Option<usize> = None;
+        let mut to_delete: Option<usize> = None;
+        let mut save_current = false;
+        egui::Window::new("📁 Perfiles de espacio de trabajo")
+            .open(&mut open)
+            .resizable(true)
+            .default_size([420.0, 320.0])
+            .show(ctx, |ui| {
+                if store.profiles.is_empty() {
+                    ui.weak("Sin perfiles. Guarda las pestañas abiertas como un perfil.");
+                }
+                for (i, p) in store.profiles.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.button("▶").on_hover_text("Abrir perfil").clicked() {
+                            to_open = Some(i);
+                        }
+                        if ui.small_button("✕").clicked() {
+                            to_delete = Some(i);
+                        }
+                        ui.label(egui::RichText::new(&p.name).strong());
+                        ui.weak(format!("{} pestañas", p.tabs.len()));
+                    });
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.profile_name)
+                            .hint_text("nombre del perfil")
+                            .desired_width(180.0),
+                    );
+                    if ui
+                        .add_enabled(
+                            !self.profile_name.trim().is_empty(),
+                            egui::Button::new("Guardar pestañas actuales"),
+                        )
+                        .clicked()
+                    {
+                        save_current = true;
+                    }
+                });
+            });
+
+        if save_current {
+            let tabs: Vec<ProfileTab> = host
+                .current_tabs()
+                .into_iter()
+                .map(|t| ProfileTab {
+                    argv: t.argv,
+                    cwd: t.cwd,
+                    key: t.key,
+                    name: t.name,
+                })
+                .collect();
+            store.profiles.push(Profile {
+                name: self.profile_name.trim().to_string(),
+                tabs,
+            });
+            Self::save_profiles(host, &store);
+            self.profile_name.clear();
+            host.notify("Perfil guardado".to_string());
+        }
+        if let Some(i) = to_delete {
+            if i < store.profiles.len() {
+                store.profiles.remove(i);
+                Self::save_profiles(host, &store);
+            }
+        }
+        if let Some(i) = to_open {
+            if let Some(p) = store.profiles.get(i) {
+                for t in &p.tabs {
+                    let cwd = t.cwd.clone().map(std::path::PathBuf::from);
+                    host.open_agent(t.argv.clone(), cwd.unwrap_or_else(|| ".".into()));
+                }
+                host.notify(format!("Perfil «{}» abierto", p.name));
+            }
+        }
+        self.profiles_open = open;
+    }
+
+    fn draw_dashboard(&mut self, ctx: &egui::Context, host: &mut dyn ProHost) {
+        if !self.dashboard_open {
+            return;
+        }
+        let sessions = host.sessions();
+        let mut by_provider: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        let mut total_msgs: u64 = 0;
+        for s in &sessions {
+            *by_provider.entry(s.provider.clone()).or_default() += 1;
+            total_msgs += s.message_count.unwrap_or(0);
+        }
+        let mut open = true;
+        let mut export_csv = false;
+        egui::Window::new("📊 Dashboard")
+            .open(&mut open)
+            .resizable(true)
+            .default_size([420.0, 360.0])
+            .show(ctx, |ui| {
+                ui.heading(format!("{} sesiones", sessions.len()));
+                ui.label(format!("{total_msgs} mensajes en total"));
+                ui.separator();
+                ui.label("Por proveedor:");
+                for (p, n) in &by_provider {
+                    ui.label(format!("  {p}: {n}"));
+                }
+                ui.separator();
+                if ui.button("⇩ Exportar CSV").clicked() {
+                    export_csv = true;
+                }
+            });
+        if export_csv {
+            let mut csv = String::from("provider,id,title,cwd,model,messages,last_activity\n");
+            for s in &sessions {
+                csv.push_str(&format!(
+                    "{},{},{},{},{},{},{}\n",
+                    s.provider,
+                    s.id,
+                    csv_field(s.title.as_deref().unwrap_or("")),
+                    csv_field(s.cwd.as_deref().unwrap_or("")),
+                    s.model.as_deref().unwrap_or(""),
+                    s.message_count.unwrap_or(0),
+                    s.last_activity,
+                ));
+            }
+            let dest = host.config_dir().join("exports").join("dashboard.csv");
+            match host.write_file(&dest, &csv) {
+                Ok(()) => {
+                    host.notify(format!("CSV exportado → {}", dest.display()));
+                    host.open_path(&dest.to_string_lossy());
+                }
+                Err(e) => host.notify(format!("Export CSV falló: {e}")),
+            }
+        }
+        self.dashboard_open = open;
+    }
+
+    fn draw_export(&mut self, ctx: &egui::Context, host: &mut dyn ProHost) {
+        if !self.export_open {
+            return;
+        }
+        let sessions = host.sessions();
+        let mut open = true;
+        let mut pick: Option<(String, String, String)> = None;
+        egui::Window::new("🖺 Exportar conversación a HTML")
+            .open(&mut open)
+            .resizable(true)
+            .default_size([460.0, 360.0])
+            .show(ctx, |ui| {
+                ui.weak("Elige una sesión para exportarla a HTML:");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for s in &sessions {
+                        let title = s.title.clone().unwrap_or_else(|| s.id.clone());
+                        if ui
+                            .button(format!("[{}] {}", s.provider, truncate(&title, 48)))
+                            .clicked()
+                        {
+                            pick = Some((s.provider.clone(), s.id.clone(), title));
+                        }
+                    }
+                });
+            });
+        if let Some((provider, id, title)) = pick {
+            match host.transcript(&provider, &id) {
+                Some(turns) => {
+                    let html = render_html(&title, &turns);
+                    let dest = host
+                        .config_dir()
+                        .join("exports")
+                        .join(format!("{provider}-{}.html", safe_name(&id)));
+                    match host.write_file(&dest, &html) {
+                        Ok(()) => {
+                            host.notify(format!("HTML exportado → {}", dest.display()));
+                            host.open_path(&dest.to_string_lossy());
+                        }
+                        Err(e) => host.notify(format!("Export HTML falló: {e}")),
+                    }
+                }
+                None => host.notify("No se pudo leer la conversación".to_string()),
+            }
+            self.export_open = false;
+        } else {
+            self.export_open = open;
+        }
+    }
+
+    fn draw_port(&mut self, ctx: &egui::Context, host: &mut dyn ProHost) {
+        if !self.port_open {
+            return;
+        }
+        let sessions = host.sessions();
+        let providers: Vec<ProviderLite> = host
+            .providers()
+            .into_iter()
+            .filter(|p| p.available && !p.new_session_argv.is_empty())
+            .collect();
+        if self.port_target.is_empty() {
+            if let Some(p) = providers.first() {
+                self.port_target = p.id.clone();
+            }
+        }
+        let mut open = true;
+        let mut pick: Option<(String, String, Option<String>)> = None;
+        egui::Window::new("⇄ Portar sesión a otro proveedor")
+            .open(&mut open)
+            .resizable(true)
+            .default_size([480.0, 380.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Destino:");
+                    egui::ComboBox::from_id_salt("port-target")
+                        .selected_text(
+                            providers
+                                .iter()
+                                .find(|p| p.id == self.port_target)
+                                .map(|p| p.display_name.as_str())
+                                .unwrap_or("—"),
+                        )
+                        .show_ui(ui, |ui| {
+                            for p in &providers {
+                                ui.selectable_value(
+                                    &mut self.port_target,
+                                    p.id.clone(),
+                                    &p.display_name,
+                                );
+                            }
+                        });
+                });
+                ui.weak("La conversación se inyecta como contexto en una sesión nueva.");
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for s in &sessions {
+                        let title = s.title.clone().unwrap_or_else(|| s.id.clone());
+                        if ui
+                            .button(format!("[{}] {}", s.provider, truncate(&title, 44)))
+                            .clicked()
+                        {
+                            pick = Some((s.provider.clone(), s.id.clone(), s.cwd.clone()));
+                        }
+                    }
+                });
+            });
+        if let Some((provider, id, cwd)) = pick {
+            let argv = providers
+                .iter()
+                .find(|p| p.id == self.port_target)
+                .map(|p| p.new_session_argv.clone());
+            match (host.transcript(&provider, &id), argv) {
+                (Some(turns), Some(argv)) => {
+                    let context = port_context(&turns);
+                    let cwd = cwd
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| ".".into());
+                    if let Some(tab_id) = host.open_agent(argv, cwd) {
+                        host.inject_prompt(tab_id, context, 2500);
+                        host.notify(format!("Portada a {}", self.port_target));
+                    }
+                }
+                _ => host.notify("No se pudo portar la sesión".to_string()),
+            }
+            self.port_open = false;
+        } else {
+            self.port_open = open;
+        }
+    }
+
+    fn run_memory_graph(&mut self, host: &mut dyn ProHost) {
+        let Some(root) = host.repo_root() else {
+            host.notify("Abre una pestaña dentro de un repo para el memory graph.".to_string());
+            return;
+        };
+        let md = std::fs::read_to_string(root.join("CLAUDE.md")).unwrap_or_default();
+        if md.is_empty() {
+            host.notify("No hay CLAUDE.md en este repo.".to_string());
+            return;
+        }
+        let mut report = format!("# Memory graph — {}\n\n", root.display());
+        let imports: Vec<&str> = md
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix('@'))
+            .collect();
+        let links: Vec<String> = md
+            .match_indices("[[")
+            .filter_map(|(i, _)| {
+                md[i + 2..]
+                    .find("]]")
+                    .map(|j| md[i + 2..i + 2 + j].to_string())
+            })
+            .collect();
+        report.push_str(&format!("Líneas: {}\n\n", md.lines().count()));
+        report.push_str("## Imports (@)\n\n");
+        if imports.is_empty() {
+            report.push_str("_(ninguno)_\n");
+        } else {
+            for im in &imports {
+                report.push_str(&format!("- `{im}`\n"));
+            }
+        }
+        report.push_str("\n## Enlaces [[…]]\n\n");
+        if links.is_empty() {
+            report.push_str("_(ninguno)_\n");
+        } else {
+            for l in &links {
+                report.push_str(&format!("- [[{l}]]\n"));
+            }
+        }
+        host.show_report("Memory graph".to_string(), report);
+    }
+
+    fn run_mcp_config(&mut self, host: &mut dyn ProHost) {
+        let snippet = "{\n  \"mcpServers\": {\n    \"agent-sessions\": {\n      \
+            \"command\": \"agent-sessions-cli\",\n      \"args\": [\"serve\"]\n    }\n  }\n}\n";
+        if let Some(root) = host.repo_root() {
+            let dest = root.join(".mcp.json");
+            match host.write_file(&dest, snippet) {
+                Ok(()) => host.notify(format!("MCP escrito → {}", dest.display())),
+                Err(e) => host.notify(format!("MCP falló: {e}")),
+            }
+        }
+        host.show_report(
+            "Configurar MCP".to_string(),
+            format!(
+                "Servidor MCP de Agent Sessions (busca en tu propio historial).\n\n\
+                 Escrito `.mcp.json` en el repo si había uno abierto. Snippet:\n\n```json\n{snippet}```\n"
+            ),
+        );
+    }
+}
+
+/// Truncate with an ellipsis for compact labels.
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!(
+            "{}…",
+            s.chars().take(max.saturating_sub(1)).collect::<String>()
+        )
+    }
+}
+
+/// Quote a CSV field if it contains a comma, quote or newline.
+fn csv_field(s: &str) -> String {
+    if s.contains([',', '"', '\n']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// A filesystem-safe version of an id (for export filenames).
+fn safe_name(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// Minimal HTML escaping.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Render a conversation as a self-contained HTML document.
+fn render_html(title: &str, turns: &[aterm_pro_api::Turn]) -> String {
+    let mut body = String::new();
+    for t in turns {
+        body.push_str(&format!(
+            "<div class=\"turn {}\"><div class=\"role\">{}</div><pre>{}</pre></div>\n",
+            html_escape(&t.role),
+            html_escape(&t.role),
+            html_escape(&t.text),
+        ));
+    }
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title>\
+         <style>body{{font-family:system-ui,sans-serif;max-width:820px;margin:2rem auto;\
+         padding:0 1rem;background:#1e1e2e;color:#cdd6f4}}.turn{{margin:1rem 0;border-radius:8px;\
+         padding:.6rem .9rem;background:#313244}}.role{{font-weight:600;color:#89b4fa;\
+         text-transform:uppercase;font-size:.75rem;margin-bottom:.3rem}}\
+         pre{{white-space:pre-wrap;word-wrap:break-word;margin:0;font-family:ui-monospace,monospace}}\
+         </style></head><body><h1>{}</h1>{}</body></html>",
+        html_escape(title),
+        html_escape(title),
+        body
+    )
+}
+
+/// Build a context prompt from a transcript for porting to another provider
+/// (truncated so it stays a reasonable paste).
+fn port_context(turns: &[aterm_pro_api::Turn]) -> String {
+    let mut out = String::from(
+        "Contexto de una conversación previa que estoy migrando. Continúa desde aquí.\n\n",
+    );
+    for t in turns.iter().rev().take(20).rev() {
+        out.push_str(&format!("[{}] {}\n\n", t.role, truncate(&t.text, 1200)));
+    }
+    out
 }
 
 #[cfg(test)]

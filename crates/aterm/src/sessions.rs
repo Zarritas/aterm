@@ -400,6 +400,26 @@ impl SessionPanel {
         }
     }
 
+    /// Flatten the scanned sessions for the Pro surface (dashboard/profiles).
+    pub fn sessions_lite(&self) -> Vec<aterm_pro_api::SessionLite> {
+        self.groups
+            .iter()
+            .flat_map(|g| {
+                let pid = g.provider.id().to_string();
+                g.sessions.iter().map(move |s| aterm_pro_api::SessionLite {
+                    provider: pid.clone(),
+                    id: s.id.clone(),
+                    title: s.title.clone(),
+                    cwd: s.cwd.clone(),
+                    model: s.model.clone(),
+                    last_activity: s.last_activity,
+                    message_count: s.message_count.map(u64::from),
+                    resume_argv: s.resume_argv.clone(),
+                })
+            })
+            .collect()
+    }
+
     /// Open the templates manager (used by the app's action palette).
     pub fn open_templates(&mut self) {
         self.templates_open = true;

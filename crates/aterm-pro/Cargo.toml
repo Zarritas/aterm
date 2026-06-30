@@ -15,3 +15,5 @@ publish = false
 [dependencies]
 aterm-pro-api = { path = "../aterm-pro-api" }
 egui = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
