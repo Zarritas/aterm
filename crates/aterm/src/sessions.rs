@@ -800,22 +800,18 @@ impl SessionPanel {
                         &resp,
                         egui::PopupCloseBehavior::CloseOnClickOutside,
                         |ui| {
+                            // No max height: the popup grows to fit its content
+                            // (candidates are capped at 12 upstream), so it never
+                            // stays small when switching from a folder with few
+                            // subfolders to one with many.
                             ui.set_min_width(resp.rect.width());
-                            egui::ScrollArea::vertical()
-                                .max_height(220.0)
-                                .show(ui, |ui| {
-                                    for (i, c) in candidates.into_iter().enumerate() {
-                                        let row = ui
-                                            .selectable_label(sel == Some(i), completion_label(&c));
-                                        if sel == Some(i) {
-                                            row.scroll_to_me(Some(egui::Align::Center));
-                                        }
-                                        if row.clicked() {
-                                            self.import_path = c;
-                                            picked = true;
-                                        }
-                                    }
-                                });
+                            for (i, c) in candidates.into_iter().enumerate() {
+                                let row = ui.selectable_label(sel == Some(i), completion_label(&c));
+                                if row.clicked() {
+                                    self.import_path = c;
+                                    picked = true;
+                                }
+                            }
                         },
                     );
                     if picked {
